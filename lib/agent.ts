@@ -115,7 +115,9 @@ export async function executeSpend(pot: Pot, spend: Spend): Promise<void> {
   try {
     if (!paypalConfigured()) throw new PayPalNotConfigured();
     const out = await createPayout({
-      senderBatchId: `chaipot-${pot.id}-${spend.id}`.slice(0, 127),
+      // Deterministic per bill so a retry can't pay twice. pot.createdAt is part of it because
+      // "Reset demo" re-seeds the same bill ids, and PayPal rejects a reused sender_batch_id.
+      senderBatchId: `chaipot-${pot.id}-${pot.createdAt.toString(36)}-${spend.id}`.slice(0, 127),
       email: spend.payeeEmail,
       amount: spend.amount,
       currency: pot.currency,
