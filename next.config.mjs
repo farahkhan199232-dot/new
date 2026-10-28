@@ -1,0 +1,9 @@
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  // Keep the wallet SDKs out of the server bundle.
+  serverExternalPackages: ["@base-org/account"],
+  async headers() {
+    return [{ source: "/(.*)", headers: [{ key: "X-Content-Type-Options", value: "nosniff" }, { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" }] }];
+  },
+};
+export default nextConfig;

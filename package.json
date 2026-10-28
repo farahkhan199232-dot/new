@@ -1,0 +1,29 @@
+{
+  "name": "chai-pot",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --no-warnings --test lib/*.test.ts"
+  },
+  "dependencies": {
+    "@base-org/account": "^2.4.0",
+    "@tanstack/react-query": "^5.90.0",
+    "@upstash/redis": "^1.35.0",
+    "next": "^16.0.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "viem": "^2.45.0",
+    "wagmi": "^2.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "^5.9.0"
+  }
+}
