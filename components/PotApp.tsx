@@ -110,7 +110,7 @@ export function PotApp({ id }: { id: string }) {
       {pot.isDemo && (
         <div className="notice" style={{ marginBottom: 10 }}>
           Demo pot. Entries marked <span className="badge sample">sample</span> are seeded; anything you do here runs for real against PayPal
-          sandbox and Gemini. Switch &ldquo;You are&rdquo; to act as another member.{" "}
+          sandbox and NVIDIA Nemotron on Nebius Token Factory. Switch &ldquo;You are&rdquo; to act as another member.{" "}
           <a
             href="#"
             onClick={(e) => {
@@ -708,6 +708,12 @@ function BillsTab({ pot, actor, call, flash }: { pot: Pot; actor: string; call: 
               <div className="muted small">
                 Approvals {s.approvals.length}/{pot.policy.approvalsRequired}
                 {s.approvals.length > 0 && `: ${s.approvals.map((a) => name(pot, a)).join(", ")}`}
+              </div>
+            )}
+            {s.review && (
+              <div className="reasoning small">
+                🧠 <strong>Nemotron Ultra review · {s.review.risk} risk</strong> (advisory): {s.review.summary}
+                {s.review.questions.length > 0 && <div>Check: {s.review.questions.join(" · ")}</div>}
               </div>
             )}
             {s.payout && (

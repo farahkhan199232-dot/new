@@ -3,9 +3,10 @@ import { CATEGORIES } from "./types";
 import { convertMinor, formatMoney, majorToMinor, splitEqual } from "./money";
 import { evaluatePolicy, isEmail, spentOnDay } from "./policy";
 import { computeLedger } from "./ledger";
-import { GEMINI_MODEL, interpretRequest, parseReceipt, type ReceiptParse } from "./gemini";
+import { AI_MODEL_LABEL as GEMINI_MODEL, interpretRequest, parseReceipt, type ReceiptParse } from "./gemini";
 import { createPayout, getPayoutBatch, paypalConfigured, PayPalNotConfigured } from "./paypal";
 import { audit, newId } from "./store";
+import { reviewHeldSpend } from "./nebius";
 
 /**
  * The Chai Pot agent. Gemini interprets (receipt photo or plain-language request);
@@ -107,7 +108,35 @@ async function decideAndAct(pot: Pot, p: Proposal): Promise<Spend> {
   });
 
   if (result.decision === "auto_pay") await executeSpend(pot, spend);
+  if (result.decision === "needs_approval") await addRiskReview(pot, spend, result.reasons);
   return spend;
+}
+
+/** Nemotron 3 Ultra writes an advisory risk review for a held bill (Nebius build only; never blocks the flow). */
+async function addRiskReview(pot: Pot, spend: Spend, reasons: string[]) {
+  const history = pot.spends
+    .filter((s) => s.id !== spend.id)
+    .slice(0, 15)
+    .map((s) => `- ${new Date(s.createdAt).toISOString().slice(0, 10)} ${formatMoney(s.amount, pot.currency)} ${s.category} to ${s.payeeName || s.payeeEmail} (${s.status})`)
+    .join("\n");
+  const context = [
+    `Pot: ${pot.name} (${pot.currency}), ${pot.members.length} members: ${pot.members.map((m) => m.name).join(", ")}`,
+    `Policy: per-bill cap ${formatMoney(pot.policy.perBillCap, pot.currency)}, daily cap ${formatMoney(pot.policy.dailyCap, pot.currency)}, approvals needed ${pot.policy.approvalsRequired}, allowed categories ${pot.policy.allowedCategories.join(", ")}`,
+    `Held bill: ${spend.description}; ${formatMoney(spend.amount, pot.currency)}; category ${spend.category}; payee ${spend.payeeName || ""} <${spend.payeeEmail}>; requested by ${memberName(pot, spend.requestedBy)}; split among ${Object.keys(spend.splits).map((id) => memberName(pot, id)).join(", ")}`,
+    `Why the policy held it: ${reasons.join("; ")}`,
+    `Recent bills:\n${history || "(none)"}`,
+  ].join("\n");
+  const r = await reviewHeldSpend(context);
+  if (!r) return;
+  spend.review = { risk: r.risk, summary: r.summary, questions: (r.questions_for_approvers ?? []).slice(0, 3), model: r._model };
+  audit(pot, {
+    actor: "agent",
+    kind: "risk_review",
+    spendId: spend.id,
+    summary: `Risk review (${r.risk}) for ${formatMoney(spend.amount, pot.currency)} to ${spend.payeeName || spend.payeeEmail}`,
+    reasoning: [r.summary, ...(r.questions_for_approvers ?? []).slice(0, 3).map((q) => `Check: ${q}`)].join(" "),
+    data: { model: r._model, provider: "Nebius Token Factory", advisory: true },
+  });
 }
 
 /** Send the PayPal payout. Never marks a spend paid unless PayPal accepted it. */

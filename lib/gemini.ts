@@ -1,4 +1,5 @@
 import { CATEGORIES } from "./types";
+import { nebiusChat, nebiusConfigured, NEBIUS_FALLBACK_MODEL, NEBIUS_FAST_MODEL, NEBIUS_VISION_MODEL } from "./nebius";
 
 /**
  * Gemini REST client (server only). Uses structured JSON output so the agent's
@@ -19,7 +20,18 @@ export class GeminiNotConfigured extends Error {
   }
 }
 
-export const geminiConfigured = () => !!KEY;
+/**
+ * Which model provider interprets requests and receipts.
+ * "nebius" = NVIDIA Nemotron on Nebius Token Factory (default whenever NEBIUS_API_KEY is set),
+ * "gemini" = Google Gemini (the original PayPal AI Hackathon build).
+ */
+export const AI_PROVIDER: "nebius" | "gemini" =
+  process.env.AI_PROVIDER === "gemini" ? "gemini" : process.env.AI_PROVIDER === "nebius" || nebiusConfigured() ? "nebius" : "gemini";
+
+export const geminiConfigured = () => (AI_PROVIDER === "nebius" ? nebiusConfigured() : !!KEY);
+
+/** Model label shown in the UI / audit log. */
+export const AI_MODEL_LABEL = AI_PROVIDER === "nebius" ? `${NEBIUS_FAST_MODEL} (Nebius Token Factory)` : GEMINI_MODEL;
 
 type Part = { text: string } | { inline_data: { mime_type: string; data: string } };
 
@@ -39,6 +51,7 @@ const transient = (m: string) => /Gemini error (429|500|502|503|504)|timed out|a
  * retrying transient overload errors (503 "high demand", 429) with a short backoff.
  */
 async function generateJson<T>(parts: Part[], schema: object, system: string, tuning: Tuning = {}, budgetMs = 75_000): Promise<T & { _model: string }> {
+  if (AI_PROVIDER === "nebius") return generateJsonNebius<T>(parts, schema, system, budgetMs);
   if (!KEY) throw new GeminiNotConfigured();
   const deadline = Date.now() + budgetMs;
   const models = [GEMINI_MODEL, ...FALLBACK_MODELS];
@@ -73,6 +86,34 @@ async function generateJson<T>(parts: Part[], schema: object, system: string, tu
     }
   }
   throw new GeminiBusy(/timed out|aborted|timeout/i.test(last) ? "no answer in time" : last.replace(/^Gemini error /, "Gemini ").split(":")[0]);
+}
+
+/** Same contract as the Gemini path, served by Nemotron on Nebius Token Factory. */
+async function generateJsonNebius<T>(parts: Part[], schema: object, system: string, budgetMs: number): Promise<T & { _model: string }> {
+  if (!nebiusConfigured()) throw new GeminiNotConfigured();
+  const hasImage = parts.some((p) => "inline_data" in p);
+  const primary = hasImage ? NEBIUS_VISION_MODEL : NEBIUS_FAST_MODEL;
+  const models = [primary, NEBIUS_FALLBACK_MODEL].filter((m, i, a) => a.indexOf(m) === i);
+  const content = parts.map((p) =>
+    "text" in p
+      ? { type: "text" as const, text: p.text }
+      : { type: "image_url" as const, image_url: { url: `data:${p.inline_data.mime_type};base64,${p.inline_data.data}` } },
+  );
+  const deadline = Date.now() + budgetMs;
+  let last = "";
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const left = deadline - Date.now();
+    if (left < 4_000) break;
+    const model = models[attempt % models.length];
+    try {
+      const out = await nebiusChat({ model, system, content, schema, timeoutMs: Math.min(left, models.length > 1 ? budgetMs / 2 : budgetMs), maxTokens: 4096 });
+      return Object.assign(out.json as object, { _model: model }) as T & { _model: string };
+    } catch (e) {
+      last = (e as Error).message;
+      if (/Nebius error 401/.test(last)) throw e;
+    }
+  }
+  throw new GeminiBusy(/timed out|aborted|timeout/i.test(last) ? "no answer in time" : last.split(":")[0]);
 }
 
 async function callGemini<T>(model: string, parts: Part[], schema: object, system: string, tuning: Tuning, timeoutMs: number): Promise<T> {

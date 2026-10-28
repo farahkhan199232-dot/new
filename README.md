@@ -6,6 +6,8 @@ Built for the PayPal AI Hackathon 2026. PayPal sandbox only: no real money moves
 
 **Live demo: https://chai-pot.vercel.app** (seeded demo pot: https://chai-pot.vercel.app/p/demo)
 
+> **Nebius x NVIDIA Global AI Hackathon build:** branch [`nebius-nemotron`](../../tree/nebius-nemotron), deployed separately at **https://chai-pot-nemotron.vercel.app**. The agent runs on **NVIDIA Nemotron models served by Nebius Token Factory**. See [NVIDIA Nemotron on Nebius Token Factory](#nvidia-nemotron-on-nebius-token-factory-hackathon-build). The `main` branch and https://chai-pot.vercel.app stay exactly as submitted to the PayPal AI Hackathon (Gemini).
+
 ## The problem
 
 Every trip, shared flat and team outing has the same shape: one person fronts the villa, the cab and the dinner, then spends a week chasing everyone for their share. Joint accounts and shared cards fix the fronting but have no rules: anyone can spend anything.
@@ -86,6 +88,30 @@ New for the hackathon (everything else):
 
 Removed: SIWE wallet sign-in (Chai Pot members are mostly identified by email, see "Known limitations").
 
+## NVIDIA Nemotron on Nebius Token Factory (hackathon build)
+
+Built during the Nebius x NVIDIA Global AI Hackathon (29-30 Oct 2026) on the `nebius-nemotron` branch.
+
+Every model call in the agent goes to **Nebius Token Factory's OpenAI-compatible API** (`https://api.tokenfactory.nebius.com/v1/chat/completions`) with JSON-schema constrained output. Each Nemotron model has one job, sized to the task:
+
+| Step | Model (Token Factory id) | Why this size | Code |
+|---|---|---|---|
+| Read a plain-language spend request ("pay the ₹2,400 dinner at Saravana to host@example.com") into amount, payee, category and split | **Nemotron 3 Nano** `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | Runs on every request; fast and cheap keeps the chat responsive | `lib/gemini.ts` → `generateJsonNebius`, `lib/nebius.ts` → `nebiusChat` |
+| Read a receipt photo into line items, tax and total | **Nemotron 3.5 Super VL** `nvidia/Nemotron-3.5-Super-VL` | Needs vision; the image is sent as an `image_url` data URL | same |
+| Write a risk review for any bill the policy engine **held for approval**: unusual amount vs the pot's history, new payee, category mismatch, possible duplicate, unfair split | **Nemotron 3 Ultra** `nvidia/Nemotron-3-Ultra-550b-a55b` | Rare, high-stakes, needs real reasoning over the pot's history | `lib/nebius.ts` → `reviewHeldSpend`, `lib/agent.ts` → `addRiskReview` |
+| Fallback when a model is busy or fails | **Nemotron 3 Super** `nvidia/nemotron-3-super-120b-a12b` | Same family, different capacity pool | `NEBIUS_FALLBACK_MODEL` |
+
+Safety design is unchanged: the models only **interpret and advise**. The deterministic policy engine decides, PayPal executes, and the Ultra review is advisory text shown on the bill card and in the audit log (it can't approve, reject or pay). Model names and outputs are written to the audit log so judges can see exactly which Nemotron model did what.
+
+Switch providers with `AI_PROVIDER=nebius|gemini` (default: Nebius whenever `NEBIUS_API_KEY` is set).
+
+What was built during the hackathon (vs the PayPal AI Hackathon version on `main`):
+- `lib/nebius.ts`: Token Factory client, Gemini-schema → JSON Schema converter, robust JSON extraction, Ultra risk review
+- provider switch + Nemotron routing (fast / vision / reasoning / fallback) in `lib/gemini.ts`
+- new `risk_review` audit entry and an advisory review panel on held bills (`lib/agent.ts`, `components/PotApp.tsx`)
+- unit tests for the schema converter and JSON extraction (`lib/nebius.test.ts`)
+- separate Vercel deployment with its own data prefix, so the PayPal build is untouched
+
 ## Setup and run
 
 Requirements: Node 20+ (tested on Node 22).
@@ -106,9 +132,13 @@ Environment variables (see `.env.example`):
 | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` | yes | Sandbox REST app credentials |
 | `NEXT_PUBLIC_PAYPAL_CLIENT_ID` | yes | Same client id, for the JS SDK |
 | `PAYPAL_API_BASE` | no | Defaults to `https://api-m.sandbox.paypal.com` |
-| `GEMINI_API_KEY` | yes | Google AI Studio key |
+| `NEBIUS_API_KEY` | yes (Nebius build) | Nebius Token Factory API key. When set, the agent uses NVIDIA Nemotron |
+| `NEBIUS_FAST_MODEL`, `NEBIUS_VISION_MODEL`, `NEBIUS_REASON_MODEL`, `NEBIUS_FALLBACK_MODEL` | no | Override the Nemotron model ids above |
+| `AI_PROVIDER` | no | `nebius` or `gemini` |
+| `GEMINI_API_KEY` | yes (Gemini build) | Google AI Studio key |
 | `GEMINI_MODEL` | no | Defaults to `gemini-3.8-flash` |
 | `KV_REST_API_URL`, `KV_REST_API_TOKEN` | no | Upstash Redis / Vercel KV. Empty = in-memory (resets on restart) |
+| `STORE_PREFIX` | no | Redis key prefix (default `chaipot`); the Nebius deployment uses `chaipot-nemotron` |
 | `DEMO_PAYEE_EMAIL` | no | Payee for the demo pot; defaults to the sandbox personal account below |
 | `NEXT_PUBLIC_CHAIN_ID`, `NEXT_PUBLIC_SETTLEMENT_ADDRESS`, `RPC_URL` | no | Optional USDC-on-Base funding |
 
