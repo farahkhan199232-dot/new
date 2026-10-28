@@ -682,14 +682,14 @@ function BillsTab({ pot, actor, call, flash }: { pot: Pot; actor: string; call: 
         return (
           <div className="card stack" key={s.id}>
             <div className="row">
-              <div>
+              <div style={{ minWidth: 0, overflowWrap: "anywhere" }}>
                 <strong>{s.description}</strong>
                 <div className="muted small">
                   to {s.payeeName ? `${s.payeeName} · ` : ""}
                   {s.payeeEmail} · {s.category} · asked by {name(pot, s.requestedBy)}
                 </div>
               </div>
-              <div style={{ textAlign: "right" }}>
+              <div style={{ textAlign: "right", flexShrink: 0, whiteSpace: "nowrap" }}>
                 <strong>{formatMoney(s.amount, pot.currency)}</strong>
                 <div>
                   <span className={`badge ${tone}`}>{label}</span> {s.sample && <span className="badge sample">sample</span>}
