@@ -5,7 +5,7 @@ import { CATEGORIES } from "./types";
  * interpretation can be checked by the deterministic policy engine.
  */
 const KEY = process.env.GEMINI_API_KEY;
-export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 const GEMINI_BASE = process.env.GEMINI_API_BASE || "https://generativelanguage.googleapis.com";
 
 export class GeminiNotConfigured extends Error {
@@ -26,7 +26,13 @@ async function generateJson<T>(parts: Part[], schema: object, system: string): P
     body: JSON.stringify({
       system_instruction: { parts: [{ text: system }] },
       contents: [{ role: "user", parts }],
-      generationConfig: { temperature: 0.1, responseMimeType: "application/json", responseSchema: schema },
+      generationConfig: {
+        temperature: 0.1,
+        responseMimeType: "application/json",
+        responseSchema: schema,
+        // Gemini 3.x thinks by default; extraction needs little of it and latency matters here.
+        ...(/gemini-3/.test(GEMINI_MODEL) ? { thinkingConfig: { thinkingLevel: process.env.GEMINI_THINKING_LEVEL || "low" } } : {}),
+      },
     }),
     cache: "no-store",
   });

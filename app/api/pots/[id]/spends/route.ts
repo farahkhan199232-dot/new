@@ -8,7 +8,7 @@ export const POST = withPot(async (pot, b) => {
   const actor = requireMember(pot, b.actor);
   const spend = pot.spends.find((s) => s.id === b.spendId);
   if (!spend) throw new Error("Bill not found");
-  if (spend.sample && b.action === "sync") throw new Error("Sample entries have no PayPal payout");
+  if (b.action === "sync" && !spend.payout?.batchId) throw new Error("This bill has no PayPal payout to refresh");
   switch (b.action) {
     case "approve":
       await approveSpend(pot, spend, actor);

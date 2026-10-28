@@ -55,7 +55,9 @@ export function PayPalFund({ clientId, currency, amount, createOrder, capture }:
   useEffect(() => {
     let cancelled = false;
     let buttons: { close?: () => Promise<void> } | null = null;
+    // One retry: the SDK script occasionally fails on a cold first load.
     loadSdk(clientId, currency)
+      .catch(() => new Promise<void>((r) => setTimeout(r, 1500)).then(() => loadSdk(clientId, currency)))
       .then(() => {
         if (cancelled || !ref.current || !window.paypal) return;
         ref.current.innerHTML = "";
@@ -78,6 +80,7 @@ export function PayPalFund({ clientId, currency, amount, createOrder, capture }:
         return b.render(ref.current).then(() => !cancelled && setState("ready"));
       })
       .catch((e) => {
+        if (cancelled) return;
         setState("error");
         setMsg((e as Error).message);
       });

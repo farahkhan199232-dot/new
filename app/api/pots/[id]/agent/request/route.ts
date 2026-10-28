@@ -1,7 +1,7 @@
 import { withPot } from "@/lib/http";
 import { handleTextRequest, requireMember } from "@/lib/agent";
 
-export const maxDuration = 60;
+export const maxDuration = 90;
 
 /** Body: { actor, text }. e.g. "pay the $24 dinner at Saravana to host@example.com" */
 export const POST = withPot(async (pot, b) => {

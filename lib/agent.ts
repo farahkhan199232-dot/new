@@ -20,6 +20,13 @@ export function requireMember(pot: Pot, actor: unknown): string {
   return actor;
 }
 
+/** After approvals the caps are lifted; say so instead of printing the sentinel cap value. */
+function liftedCapChecks(checks: { name: string; ok: boolean; detail: string }[], why: string) {
+  return checks.map((c) =>
+    c.name === "Per-bill cap" || c.name === "Daily cap" ? { ...c, ok: true, detail: `Lifted: ${why}` } : c,
+  );
+}
+
 function toCategory(c: string): Category {
   return (CATEGORIES as readonly string[]).includes(c) ? (c as Category) : "other";
 }
@@ -116,6 +123,8 @@ export async function executeSpend(pot: Pot, spend: Spend): Promise<void> {
     });
     spend.status = "paid";
     spend.paidAt = Date.now();
+    // A seeded bill approved in the demo is now a real sandbox payout, not a sample.
+    spend.sample = false;
     spend.payout = { batchId: out.batchId, status: out.status };
     spend.error = undefined;
     audit(pot, {
@@ -260,7 +269,7 @@ export async function approveSpend(pot: Pot, spend: Spend, actor: string) {
       kind: "policy_decision",
       decision: "reject",
       spendId: spend.id,
-      checks: r.checks,
+      checks: liftedCapChecks(r.checks, `${pot.policy.approvalsRequired} member approvals`),
       summary: `Approved by members but blocked at payment time: ${r.reasons.join("; ")}`,
     });
     return;
@@ -270,7 +279,7 @@ export async function approveSpend(pot: Pot, spend: Spend, actor: string) {
     kind: "policy_decision",
     decision: "auto_pay",
     spendId: spend.id,
-    checks: r.checks,
+    checks: liftedCapChecks(r.checks, `${pot.policy.approvalsRequired} member approvals`),
     summary: `${pot.policy.approvalsRequired} approvals reached; paying ${formatMoney(spend.amount, pot.currency)}`,
   });
   await executeSpend(pot, spend);
@@ -292,7 +301,7 @@ export async function retrySpend(pot: Pot, spend: Spend, actor: string) {
     { currency: pot.currency, potBalance: ledger.totals.potBalance, spentToday: 0 },
     { amount: spend.amount, category: spend.category, payeeEmail: spend.payeeEmail },
   );
-  audit(pot, { actor, kind: "policy_decision", decision: r.decision === "reject" ? "reject" : "auto_pay", spendId: spend.id, checks: r.checks, summary: `${memberName(pot, actor)} retried the payout for ${spend.description}` });
+  audit(pot, { actor, kind: "policy_decision", decision: r.decision === "reject" ? "reject" : "auto_pay", spendId: spend.id, checks: liftedCapChecks(r.checks, "caps were checked when the bill was first decided"), summary: `${memberName(pot, actor)} retried the payout for ${spend.description}` });
   if (r.decision === "reject") {
     spend.status = "rejected";
     spend.rejectedBy = "agent";

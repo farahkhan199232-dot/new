@@ -4,6 +4,8 @@
 
 Built for the PayPal AI Hackathon 2026. PayPal sandbox only: no real money moves.
 
+**Live demo: https://chai-pot.vercel.app** (seeded demo pot: https://chai-pot.vercel.app/p/demo)
+
 ## The problem
 
 Every trip, shared flat and team outing has the same shape: one person fronts the villa, the cab and the dinner, then spends a week chasing everyone for their share. Joint accounts and shared cards fix the fronting but have no rules: anyone can spend anything.
@@ -105,7 +107,7 @@ Environment variables (see `.env.example`):
 | `NEXT_PUBLIC_PAYPAL_CLIENT_ID` | yes | Same client id, for the JS SDK |
 | `PAYPAL_API_BASE` | no | Defaults to `https://api-m.sandbox.paypal.com` |
 | `GEMINI_API_KEY` | yes | Google AI Studio key |
-| `GEMINI_MODEL` | no | Defaults to `gemini-2.5-flash` |
+| `GEMINI_MODEL` | no | Defaults to `gemini-3.8-flash` |
 | `KV_REST_API_URL`, `KV_REST_API_TOKEN` | no | Upstash Redis / Vercel KV. Empty = in-memory (resets on restart) |
 | `DEMO_PAYEE_EMAIL` | no | Payee for the demo pot; defaults to the sandbox personal account below |
 | `NEXT_PUBLIC_CHAIN_ID`, `NEXT_PUBLIC_SETTLEMENT_ADDRESS`, `RPC_URL` | no | Optional USDC-on-Base funding |
