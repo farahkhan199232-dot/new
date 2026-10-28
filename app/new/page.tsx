@@ -96,9 +96,16 @@ export default function NewPot() {
           <h3>Members</h3>
           <p className="muted small">First row is you. Use an email (PayPal) or a 0x wallet (USDC on Base).</p>
           {rows.map((r, i) => (
-            <div className="grid2" key={i}>
-              <input placeholder={i === 0 ? "Your name" : "Name"} value={r.name} onChange={(e) => setRow(i, { name: e.target.value })} />
-              <input placeholder="email or 0x…" value={r.contact} onChange={(e) => setRow(i, { contact: e.target.value })} />
+            <div className="member-row" key={i}>
+              <input placeholder={i === 0 ? "Your name" : "Name"} value={r.name} onChange={(e) => setRow(i, { name: e.target.value })} aria-label={`Member ${i + 1} name`} />
+              <input placeholder="email or 0x…" value={r.contact} onChange={(e) => setRow(i, { contact: e.target.value })} aria-label={`Member ${i + 1} email or wallet`} />
+              {i > 0 && rows.length > 2 ? (
+                <button type="button" className="icon-btn" aria-label={`Remove member ${i + 1}`} onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}>
+                  ×
+                </button>
+              ) : (
+                <span className="icon-btn-spacer" />
+              )}
             </div>
           ))}
           <button type="button" className="btn ghost" onClick={() => setRows((r) => [...r, { name: "", contact: "" }])}>

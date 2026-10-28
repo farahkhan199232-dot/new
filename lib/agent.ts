@@ -169,7 +169,7 @@ export async function handleTextRequest(pot: Pot, actor: string, text: string) {
       kind: "agent_needs_info",
       summary: `Need more info from ${requester}: ${missing.join(", ")}`,
       reasoning: it.reasoning,
-      data: { request: text, model: GEMINI_MODEL, interpretation: it },
+      data: { request: text, model: it._model, interpretation: it },
     });
     return { spend: null, interpretation: it, missing };
   }
@@ -183,14 +183,14 @@ export async function handleTextRequest(pot: Pot, actor: string, text: string) {
     splitAmong: resolveSplit(pot, it.split_among ?? []),
     reasoning: it.reasoning,
     requestedBy: actor,
-    source: { request: text, interpretation: it },
+    source: { request: text, interpretation: it, model: it._model },
   });
   return { spend, interpretation: it, missing: [] };
 }
 
 /** Receipt photo -> itemized JSON + suggested equal split. Stored in the audit log for the pay step. */
 export async function handleReceipt(pot: Pot, actor: string, imageBase64: string, mimeType: string) {
-  const r: ReceiptParse = await parseReceipt(imageBase64, mimeType);
+  const r = await parseReceipt(imageBase64, mimeType);
   if (!(r.total > 0)) throw new Error(`Could not read a total from this receipt${r.notes ? `: ${r.notes}` : ""}`);
   const conv = toPotCurrency(pot, r.total, r.currency);
   const rate = conv.original?.rate ?? 1;
@@ -206,8 +206,9 @@ export async function handleReceipt(pot: Pot, actor: string, imageBase64: string
     summary: `Read receipt from ${r.merchant}: ${items.length} items, total ${formatMoney(conv.amount, pot.currency)}`,
     reasoning: r.notes || undefined,
     data: {
-      model: GEMINI_MODEL,
+      model: r._model,
       requestedBy: memberName(pot, actor),
+      requestedById: actor,
       receipt: r,
       amount: conv.amount,
       original: conv.original,
@@ -237,7 +238,7 @@ export async function payReceipt(pot: Pot, actor: string, receiptAuditId: string
     items: d.items,
     reasoning: `Receipt total read by the agent; split equally between ${(ids.length ? ids : pot.members.map((m) => m.id)).map((i) => memberName(pot, i)).join(", ")}.`,
     requestedBy: actor,
-    source: { receiptAuditId },
+    source: { receiptAuditId, model: (e.data as { model?: string }).model ?? GEMINI_MODEL },
   });
   (e.data as { spendId?: string }).spendId = spend.id;
   return spend;

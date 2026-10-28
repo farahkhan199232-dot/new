@@ -91,3 +91,18 @@ pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; background
 .cta { display: flex; gap: 8px; flex-wrap: wrap; }
 .cta .btn { width: auto; }
 footer { margin-top: 32px; font-size: 12px; color: var(--muted); }
+
+/* new-pot member rows */
+.member-row { display: grid; grid-template-columns: 1fr 1.3fr 36px; gap: 8px; align-items: center; }
+.icon-btn { width: 36px; height: 40px; border: 1px solid var(--line); background: #fff; color: var(--muted); border-radius: 10px; font-size: 20px; line-height: 1; cursor: pointer; }
+.icon-btn-spacer { width: 36px; }
+/* refunds + small-screen safety */
+.refund { min-width: 150px; max-width: 210px; }
+.refund input { padding: 6px 8px; font-size: 14px; width: 80px; }
+.row > * { min-width: 0; }
+.card, .muted, td { overflow-wrap: anywhere; }
+@media (max-width: 380px) {
+  .grid2 { grid-template-columns: 1fr; }
+  .landing h1 { font-size: 30px; }
+  .tabs button { font-size: 12px; padding: 8px 2px; }
+}

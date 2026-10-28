@@ -1,7 +1,7 @@
 import { withPot } from "@/lib/http";
 import { handleReceipt, requireMember } from "@/lib/agent";
 
-export const maxDuration = 90;
+export const maxDuration = 120;
 
 /** Body: { actor, image: base64 (no data: prefix), mimeType }. Max ~4 MB. */
 export const POST = withPot(async (pot, b) => {

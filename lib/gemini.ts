@@ -7,6 +7,11 @@ import { CATEGORIES } from "./types";
 const KEY = process.env.GEMINI_API_KEY;
 export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 const GEMINI_BASE = process.env.GEMINI_API_BASE || "https://generativelanguage.googleapis.com";
+/** Tried in order when the primary model is overloaded or slow (comma separated). Unknown names are skipped. */
+const FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS ?? "")
+  .split(",")
+  .map((m) => m.trim())
+  .filter((m) => m && m !== GEMINI_MODEL);
 
 export class GeminiNotConfigured extends Error {
   constructor() {
@@ -18,11 +23,63 @@ export const geminiConfigured = () => !!KEY;
 
 type Part = { text: string } | { inline_data: { mime_type: string; data: string } };
 
-async function generateJson<T>(parts: Part[], schema: object, system: string): Promise<T> {
+type Tuning = { thinkingLevel?: string; mediaResolution?: string };
+
+export class GeminiBusy extends Error {
+  constructor(detail: string) {
+    super(`The AI model is busy right now (${detail}). Nothing was paid; try again in a minute.`);
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const transient = (m: string) => /Gemini error (429|500|502|503|504)|timed out|aborted|fetch failed/i.test(m);
+
+/**
+ * Calls Gemini with a hard deadline so the serverless function never hits its own timeout,
+ * retrying transient overload errors (503 "high demand", 429) with a short backoff.
+ */
+async function generateJson<T>(parts: Part[], schema: object, system: string, tuning: Tuning = {}, budgetMs = 75_000): Promise<T & { _model: string }> {
   if (!KEY) throw new GeminiNotConfigured();
-  const r = await fetch(`${GEMINI_BASE}/v1beta/models/${GEMINI_MODEL}:generateContent`, {
+  const deadline = Date.now() + budgetMs;
+  const models = [GEMINI_MODEL, ...FALLBACK_MODELS];
+  // With fallbacks configured, don't let one hung model eat the whole budget.
+  const perAttempt = models.length > 1 ? Math.min(35_000, budgetMs / 2) : budgetMs;
+  let t: Tuning = tuning;
+  let last = "";
+  let i = 0;
+  for (let attempt = 0; attempt < 6 && models.length; attempt++) {
+    const left = deadline - Date.now();
+    if (left < 4_000) break;
+    const model = models[i % models.length];
+    try {
+      const out = await callGemini<T>(model, parts, schema, system, t, Math.min(left, perAttempt));
+      return Object.assign(out as object, { _model: model }) as T & { _model: string };
+    } catch (e) {
+      last = (e as Error).message;
+      // A tuning knob the model doesn't support: retry once with defaults.
+      if (Object.keys(t).length && /Gemini error 400/.test(last) && !/not found/i.test(last)) {
+        t = {};
+        continue;
+      }
+      // A fallback name this key can't use: drop it.
+      if (model !== GEMINI_MODEL && /Gemini error (400|403|404)/.test(last)) {
+        models.splice(models.indexOf(model), 1);
+        continue;
+      }
+      if (!transient(last)) throw e;
+      i++;
+      // Switching models needs no wait; retrying the same one backs off a little.
+      if (models.length === 1) await sleep(Math.min(1500 * 2 ** attempt, Math.max(0, deadline - Date.now() - 4_000)));
+    }
+  }
+  throw new GeminiBusy(/timed out|aborted|timeout/i.test(last) ? "no answer in time" : last.replace(/^Gemini error /, "Gemini ").split(":")[0]);
+}
+
+async function callGemini<T>(model: string, parts: Part[], schema: object, system: string, tuning: Tuning, timeoutMs: number): Promise<T> {
+  const thinkingLevel = tuning.thinkingLevel || process.env.GEMINI_THINKING_LEVEL || "low";
+  const r = await fetch(`${GEMINI_BASE}/v1beta/models/${model}:generateContent`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": KEY },
+    headers: { "Content-Type": "application/json", "x-goog-api-key": KEY ?? "" },
     body: JSON.stringify({
       system_instruction: { parts: [{ text: system }] },
       contents: [{ role: "user", parts }],
@@ -31,10 +88,12 @@ async function generateJson<T>(parts: Part[], schema: object, system: string): P
         responseMimeType: "application/json",
         responseSchema: schema,
         // Gemini 3.x thinks by default; extraction needs little of it and latency matters here.
-        ...(/gemini-3/.test(GEMINI_MODEL) ? { thinkingConfig: { thinkingLevel: process.env.GEMINI_THINKING_LEVEL || "low" } } : {}),
+        ...(/gemini-3/.test(model) ? { thinkingConfig: { thinkingLevel } } : {}),
+        ...(tuning.mediaResolution ? { mediaResolution: tuning.mediaResolution } : {}),
       },
     }),
     cache: "no-store",
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(`Gemini error ${r.status}: ${d.error?.message ?? "request failed"}`);
@@ -100,6 +159,10 @@ export function parseReceipt(imageBase64: string, mimeType: string) {
     ],
     receiptSchema,
     "You read restaurant, grocery, cab and hotel receipts for a group wallet app. Never invent line items or totals that are not on the receipt.",
+    // Receipts are plain printed text: minimal thinking and medium image resolution keep this
+    // well under the function time limit (high/low took ~75s on gemini-3.8-flash).
+    { thinkingLevel: process.env.GEMINI_RECEIPT_THINKING_LEVEL || "minimal", mediaResolution: "MEDIA_RESOLUTION_MEDIUM" },
+    100_000,
   );
 }
 

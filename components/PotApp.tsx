@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AuditEntry, Pot, Spend } from "@/lib/types";
 import { computeLedger, refundableAmount } from "@/lib/ledger";
-import { formatMoney } from "@/lib/money";
+import { formatMoney, splitEqual } from "@/lib/money";
 import { spentOnDay } from "@/lib/policy";
 import { PayPalFund } from "./PayPalFund";
 import { UsdcFund } from "./UsdcFund";
@@ -65,6 +65,14 @@ export function PotApp({ id }: { id: string }) {
     },
     [id, actor],
   );
+
+  /** Re-read the pot (used while a slow agent call is in flight or after a dropped response). */
+  const refresh = useCallback(async () => {
+    const r = await fetch(`/api/pots/${id}`, { cache: "no-store" });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.pot) setPot(d.pot);
+    return (d.pot ?? null) as Pot | null;
+  }, [id]);
 
   const flash = (m: string) => {
     setToast(m);
@@ -145,7 +153,7 @@ export function PotApp({ id }: { id: string }) {
       {toast && <div className="notice good" style={{ marginBottom: 10 }}>{toast}</div>}
 
       {tab === "pot" && <PotTab pot={pot} actor={actor} config={config} call={call} flash={flash} />}
-      {tab === "agent" && <AgentTab pot={pot} actor={actor} config={config} call={call} flash={flash} goBills={() => setTab("bills")} />}
+      {tab === "agent" && <AgentTab key={actor} pot={pot} actor={actor} config={config} call={call} refresh={refresh} flash={flash} goBills={() => setTab("bills")} />}
       {tab === "bills" && <BillsTab pot={pot} actor={actor} call={call} flash={flash} />}
       {tab === "audit" && <AuditTab pot={pot} />}
     </main>
@@ -309,19 +317,15 @@ function PotTab({ pot, actor, config, call, flash }: { pot: Pot; actor: string; 
                     Capture {c.ref}
                     {refunded > 0 && ` · ${formatMoney(refunded, pot.currency)} refunded`}
                   </div>
+                  {pot.refunds
+                    .filter((r) => r.contributionId === c.id)
+                    .map((r) => (
+                      <div className="muted small" key={r.id}>
+                        Refund {r.ref} · {formatMoney(r.amount, pot.currency)} · {r.status}
+                      </div>
+                    ))}
                 </div>
-                <button
-                  className="btn small secondary"
-                  disabled={max <= 0}
-                  onClick={() =>
-                    confirm(`Refund ${formatMoney(max, pot.currency)} to your PayPal?`) &&
-                    call("refunds", { contributionId: c.id })
-                      .then(() => flash("Refund sent via PayPal"))
-                      .catch((e) => flash(e.message))
-                  }
-                >
-                  Refund {formatMoney(max, pot.currency)}
-                </button>
+                <RefundControl key={`${c.id}-${max}`} max={max} currency={pot.currency} call={call} flash={flash} contributionId={c.id} />
               </div>
             );
           })}
@@ -342,6 +346,68 @@ function PotTab({ pot, actor, config, call, flash }: { pot: Pot; actor: string; 
           <span className="pos">+{formatMoney(c.amount, pot.currency)}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Partial or full refund of one PayPal contribution, with an inline confirm step. */
+function RefundControl({
+  max,
+  currency,
+  contributionId,
+  call,
+  flash,
+}: {
+  max: number;
+  currency: string;
+  contributionId: string;
+  call: Call;
+  flash: (m: string) => void;
+}) {
+  const [amt, setAmt] = useState((max / 100).toFixed(2));
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  if (max <= 0) return <span className="muted small">Nothing left to refund</span>;
+  const minor = /^\d+(\.\d{1,2})?$/.test(amt.trim()) ? Math.round(Number(amt) * 100) : NaN;
+  const valid = Number.isFinite(minor) && minor > 0 && minor <= max;
+  async function go() {
+    setBusy(true);
+    setErr("");
+    try {
+      await call("refunds", { contributionId, amount: amt.trim() });
+      flash(`Refunded ${formatMoney(minor, currency)} via PayPal`);
+    } catch (e) {
+      setErr((e as Error).message);
+      setConfirming(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="refund">
+      <div className="row" style={{ gap: 6 }}>
+        <input
+          aria-label="Refund amount"
+          inputMode="decimal"
+          value={amt}
+          disabled={busy}
+          onChange={(e) => {
+            setAmt(e.target.value);
+            setConfirming(false);
+          }}
+        />
+        {confirming ? (
+          <button className="btn small" disabled={busy || !valid} onClick={go}>
+            {busy ? "Refunding…" : `Confirm ${formatMoney(minor, currency)}`}
+          </button>
+        ) : (
+          <button className="btn small secondary" disabled={!valid} onClick={() => setConfirming(true)}>
+            Refund
+          </button>
+        )}
+      </div>
+      <div className="muted small">{err ? <span className="neg">{err}</span> : `Up to ${formatMoney(max, currency)}`}</div>
     </div>
   );
 }
@@ -376,6 +442,7 @@ function AgentTab({
   actor,
   config,
   call,
+  refresh,
   flash,
   goBills,
 }: {
@@ -383,6 +450,7 @@ function AgentTab({
   actor: string;
   config: Config | null;
   call: Call;
+  refresh: () => Promise<Pot | null>;
   flash: (m: string) => void;
   goBills: () => void;
 }) {
@@ -411,18 +479,65 @@ function AgentTab({
     }
   }
 
-  async function upload(f: File | undefined) {
+  // A receipt this member uploaded recently that has not been sent for payment yet. Lets the
+  // result show up even if the page was reloaded or the response was dropped mid-read.
+  const pendingReceipt = (since: number) =>
+    pot.audit.find(
+      (a) =>
+        a.kind === "agent_receipt" &&
+        a.at >= since &&
+        (a.data as { requestedById?: string; spendId?: string } | undefined)?.requestedById === actor &&
+        !(a.data as { spendId?: string } | undefined)?.spendId,
+    );
+  useEffect(() => {
+    if (receiptId || busy) return;
+    const r = pendingReceipt(Date.now() - 30 * 60_000);
+    if (r) setReceiptId(r.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pot.audit, actor]);
+
+  // Show elapsed time while the agent reads, so a slow model call doesn't look frozen.
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!busy) return setElapsed(0);
+    const t0 = Date.now();
+    const t = setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [busy]);
+
+  async function upload(f: File | undefined, input?: HTMLInputElement) {
     if (!f) return;
+    const started = Date.now() - 5_000;
     setBusy("Reading receipt…");
     setErr("");
+    setReceiptId("");
+    // Poll the pot while the model works: if the response is lost (timeout, flaky network),
+    // the parsed receipt still appears as soon as the server has saved it.
+    let found = "";
+    const poll = setInterval(async () => {
+      const p = await refresh().catch(() => null);
+      const hit = p?.audit.find(
+        (a) => a.kind === "agent_receipt" && a.at >= started && (a.data as { requestedById?: string } | undefined)?.requestedById === actor,
+      );
+      if (hit) found = hit.id;
+    }, 6000);
     try {
       const { data, mime } = await fileToBase64(f);
       const d = await call("agent/receipt", { image: data, mimeType: mime });
       setReceiptId(d.receiptId);
     } catch (e) {
-      setErr((e as Error).message);
+      const p = found ? null : await refresh().catch(() => null);
+      const hit =
+        found ||
+        p?.audit.find(
+          (a) => a.kind === "agent_receipt" && a.at >= started && (a.data as { requestedById?: string } | undefined)?.requestedById === actor,
+        )?.id;
+      if (hit) setReceiptId(hit);
+      else setErr((e as Error).message === "Failed to fetch" ? "Lost the connection while the agent was reading. Try the photo again." : (e as Error).message);
     } finally {
+      clearInterval(poll);
       setBusy("");
+      if (input) input.value = "";
     }
   }
 
@@ -468,7 +583,12 @@ function AgentTab({
 
       <h2>Or snap a receipt</h2>
       <div className="card stack">
-        <input type="file" accept="image/*" capture="environment" disabled={disabled || !!busy} onChange={(e) => upload(e.target.files?.[0])} />
+        <input type="file" accept="image/*" capture="environment" disabled={disabled || !!busy} onChange={(e) => upload(e.target.files?.[0], e.currentTarget)} />
+        {busy === "Reading receipt…" && (
+          <p className="muted small" role="status">
+            Reading receipt… {elapsed}s. The agent itemizes every line; this can take up to a minute.
+          </p>
+        )}
         <p className="muted small">The agent itemizes it and suggests a split. You add who gets paid.</p>
         {rd && (
           <div className="stack">
@@ -507,7 +627,7 @@ function AgentTab({
                   className={`chip ${split.includes(m.id) ? "on" : ""}`}
                   onClick={() => setSplit((s) => (s.includes(m.id) ? s.filter((x) => x !== m.id) : [...s, m.id]))}
                 >
-                  {m.name} {split.includes(m.id) && formatMoney(Math.floor(rd.amount / Math.max(1, split.length)), pot.currency)}
+                  {m.name} {split.includes(m.id) && formatMoney(splitEqual(rd.amount, split)[m.id] ?? 0, pot.currency)}
                 </button>
               ))}
             </div>
