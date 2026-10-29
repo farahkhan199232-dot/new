@@ -6,6 +6,20 @@ Built for the PayPal AI Hackathon 2026. PayPal sandbox only: no real money moves
 
 **Live demo: https://chai-pot.vercel.app** (seeded demo pot: https://chai-pot.vercel.app/p/demo)
 
+## Qloo Agentic Hackathon build: Taste Picks (branch `qloo-taste`)
+
+**Live: https://chai-pot-qloo.vercel.app/p/demo** (Agent tab → Taste Picks)
+
+Before a group spends, the agent suggests *where*. Taste Picks turns the pot's own history into Qloo signals:
+
+1. **Seeds from real spending**: every merchant the pot already paid or asked to pay is resolved to a Qloo place entity with `/search` (`types=urn:entity:place`), keeping only the match in the trip's location.
+2. **Budget from the ledger**: money left in the pot per member becomes `filter.price_level.max` (≤$8 → $, ≤$20 → $$, ≤$45 → $$$, else $$$$).
+3. **Qloo Insights**: `/v2/insights` with `filter.type=urn:entity:place`, `filter.location.query`, a category tag (restaurant / hotel / tourist attraction) and `signal.interests.entities` = the seeds. Qloo returns places people with the same taste love, with affinity, price level, rating, tags and keywords.
+4. **Agent explains**: Gemini writes one sentence on the group's taste and one reason per pick, from Qloo's facts only (it cannot invent prices).
+5. **Policy stays in charge**: picks are suggestions. "Pay here…" pre-fills a request; the deterministic policy engine (caps, categories, approvals) still decides, and every Taste Picks run is written to the audit log. If the pot's policy doesn't allow the category, the card says the agent would refuse.
+
+Code: `lib/qloo.ts`, `app/api/pots/[id]/agent/taste/route.ts`, `TastePicks` in `components/PotApp.tsx`, tests in `lib/qloo.test.ts`. Env: `QLOO_API_KEY` (and optional `QLOO_API_BASE`, default `https://hackathon.api.qloo.com`), `STORE_PREFIX` so this deployment's pots are separate from the PayPal entry.
+
 ## The problem
 
 Every trip, shared flat and team outing has the same shape: one person fronts the villa, the cab and the dinner, then spends a week chasing everyone for their share. Joint accounts and shared cards fix the fronting but have no rules: anyone can spend anything.
