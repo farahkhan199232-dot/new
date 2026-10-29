@@ -14,3 +14,9 @@ test("extractJson handles think blocks and fences", () => {
   assert.deepEqual(extractJson('<think>hmm</think>```json\n{"x":1}\n```'), { x: 1 });
   assert.deepEqual(extractJson('Sure: {"y":2} done'), { y: 2 });
 });
+
+test("reviewHeldSpend returns null without NEBIUS_API_KEY (graceful fallback)", async () => {
+  const { reviewHeldSpend, nebiusConfigured } = await import("./nebius.ts");
+  if (nebiusConfigured()) return;
+  assert.equal(await reviewHeldSpend("Bill: $40 groceries"), null);
+});

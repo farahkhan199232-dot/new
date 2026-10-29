@@ -1,5 +1,5 @@
 import { paypalConfigured, paypalEnv } from "@/lib/paypal";
-import { geminiConfigured, AI_MODEL_LABEL as GEMINI_MODEL, AI_PROVIDER } from "@/lib/gemini";
+import { geminiConfigured, AI_MODEL_LABEL as GEMINI_MODEL, AI_PROVIDER, AI_FELL_BACK } from "@/lib/gemini";
 import { usdcEnabled } from "@/lib/chain-server";
 import { storeKind } from "@/lib/store";
 
@@ -15,6 +15,7 @@ export async function GET() {
     ai: geminiConfigured(),
     model: GEMINI_MODEL,
     provider: AI_PROVIDER,
+    fallback: AI_FELL_BACK,
     usdc: usdcEnabled(),
     store: storeKind,
   });

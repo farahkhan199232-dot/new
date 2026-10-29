@@ -25,13 +25,29 @@ export class GeminiNotConfigured extends Error {
  * "nebius" = NVIDIA Nemotron on Nebius Token Factory (default whenever NEBIUS_API_KEY is set),
  * "gemini" = Google Gemini (the original PayPal AI Hackathon build).
  */
-export const AI_PROVIDER: "nebius" | "gemini" =
+/** What the deployment asked for (AI_PROVIDER env, or nebius whenever NEBIUS_API_KEY is set). */
+export const AI_PROVIDER_REQUESTED: "nebius" | "gemini" =
   process.env.AI_PROVIDER === "gemini" ? "gemini" : process.env.AI_PROVIDER === "nebius" || nebiusConfigured() ? "nebius" : "gemini";
+
+/**
+ * Provider actually used. Graceful fallback: if Nemotron was requested but NEBIUS_API_KEY
+ * is missing and a Gemini key exists, run on Gemini instead of failing every request.
+ */
+export const AI_PROVIDER: "nebius" | "gemini" =
+  AI_PROVIDER_REQUESTED === "nebius" && !nebiusConfigured() && !!KEY ? "gemini" : AI_PROVIDER_REQUESTED;
+
+/** True when the requested Nemotron provider is unavailable and we fell back. */
+export const AI_FELL_BACK = AI_PROVIDER !== AI_PROVIDER_REQUESTED;
 
 export const geminiConfigured = () => (AI_PROVIDER === "nebius" ? nebiusConfigured() : !!KEY);
 
 /** Model label shown in the UI / audit log. */
-export const AI_MODEL_LABEL = AI_PROVIDER === "nebius" ? `${NEBIUS_FAST_MODEL} (Nebius Token Factory)` : GEMINI_MODEL;
+export const AI_MODEL_LABEL =
+  AI_PROVIDER === "nebius"
+    ? `${NEBIUS_FAST_MODEL} (Nebius Token Factory)`
+    : AI_FELL_BACK
+      ? `${GEMINI_MODEL} (fallback: NEBIUS_API_KEY not set)`
+      : GEMINI_MODEL;
 
 type Part = { text: string } | { inline_data: { mime_type: string; data: string } };
 
