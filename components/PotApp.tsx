@@ -17,6 +17,7 @@ interface Config {
   model: string;
   usdc: boolean;
   store: string;
+  taste?: boolean;
 }
 
 type Tab = "pot" | "agent" | "bills" | "audit";
@@ -561,6 +562,8 @@ function AgentTab({
 
   return (
     <div>
+      <TastePicks pot={pot} config={config} call={call} disabled={disabled} onUse={(t) => setText(t)} />
+
       <h2>Ask the agent to pay</h2>
       <div className="card stack">
         <textarea
@@ -663,6 +666,128 @@ const statusBadge: Record<Spend["status"], [string, string]> = {
   rejected: ["rejected", "bad"],
   failed: ["payout failed", "bad"],
 };
+
+type TastePickView = {
+  entityId: string;
+  name: string;
+  address?: string;
+  priceLevel?: number;
+  rating?: number;
+  affinity?: number;
+  tags: string[];
+  keywords: string[];
+  image?: string;
+  website?: string;
+};
+type TasteView = {
+  location: string;
+  category: string;
+  seeds: { name: string; entityId: string }[];
+  maxPriceLevel: number;
+  perHeadBudget: number;
+  picks: TastePickView[];
+  policyAllowsCategory: boolean;
+  summary: string;
+  reasons: Record<string, string>;
+  model: string;
+};
+
+const TASTE_LABEL: Record<string, string> = { food: "Food", stay: "Stay", activities: "Things to do" };
+
+/** Taste Picks: Qloo suggests where the group should spend next, from what it already paid for. */
+function TastePicks({ pot, config, call, disabled, onUse }: { pot: Pot; config: Config | null; call: Call; disabled: boolean; onUse: (text: string) => void }) {
+  const [location, setLocation] = useState(pot.isDemo ? "Goa" : "");
+  const [category, setCategory] = useState("food");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [res, setRes] = useState<TasteView | null>(null);
+  const off = config && config.taste === false;
+
+  async function go() {
+    setBusy(true);
+    setErr("");
+    try {
+      const d = await call("agent/taste", { location, category });
+      setRes(d.taste);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <h2>Taste Picks</h2>
+      <div className="card stack">
+        <p className="muted small">
+          The agent reads where this pot already spent, asks Qloo&rsquo;s taste AI for places people with that taste love, and keeps them inside
+          what&rsquo;s left per person. Suggestions only; nothing is paid until you ask.
+        </p>
+        {off && <div className="notice bad">Qloo not configured on this deployment (QLOO_API_KEY missing).</div>}
+        <div className="row" style={{ gap: 8 }}>
+          <input placeholder="Where are you? e.g. Goa" value={location} onChange={(e) => setLocation(e.target.value)} disabled={disabled || busy} />
+          <select value={category} onChange={(e) => setCategory(e.target.value)} disabled={disabled || busy} style={{ width: "auto" }} aria-label="Category">
+            {Object.entries(TASTE_LABEL).map(([k, v]) => (
+              <option key={k} value={k}>
+                {v}
+              </option>
+            ))}
+          </select>
+        </div>
+        <button className="btn" disabled={disabled || busy || !!off || location.trim().length < 2} onClick={go}>
+          {busy ? "Asking Qloo…" : "Suggest places"}
+        </button>
+        {err && <div className="notice bad">{err}</div>}
+        {res && (
+          <div className="stack">
+            <p className="small">
+              {res.seeds.length ? (
+                <>
+                  Based on <strong>{res.seeds.map((s) => s.name).join(", ")}</strong>
+                </>
+              ) : (
+                <>No past merchants found on Qloo, so these are popular picks</>
+              )}{" "}
+              · up to {"$".repeat(res.maxPriceLevel)} ({formatMoney(res.perHeadBudget, pot.currency)} left per person)
+            </p>
+            {!res.policyAllowsCategory && (
+              <div className="notice">This pot&rsquo;s policy doesn&rsquo;t allow {TASTE_LABEL[res.category]?.toLowerCase()} bills, so the agent would refuse to pay these.</div>
+            )}
+            {res.summary && <div className="reasoning">🤖 {res.summary}</div>}
+            {!res.picks.length && <p className="muted small">Qloo found nothing in that area at this price. Try a wider area.</p>}
+            {res.picks.map((p) => (
+              <div key={p.entityId} className="card" style={{ display: "flex", gap: 10, margin: 0 }}>
+                {p.image && <img src={p.image} alt="" style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 8, flex: "none" }} />}
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div className="row">
+                    <strong>{p.name}</strong>
+                    <span className="small muted">
+                      {p.priceLevel ? "$".repeat(p.priceLevel) : ""} {p.rating ? `★ ${p.rating}` : ""}
+                    </span>
+                  </div>
+                  {p.address && <div className="muted small">{p.address}</div>}
+                  <div className="small">{res.reasons[p.entityId] || [...p.tags, ...p.keywords].slice(0, 4).join(" · ")}</div>
+                  <div className="row small" style={{ marginTop: 4 }}>
+                    <span className="muted">{p.affinity != null ? `taste match ${Math.round(p.affinity * 100)}%` : ""}</span>
+                    <button
+                      className="chip"
+                      disabled={disabled}
+                      onClick={() => onUse(`Pay for ${TASTE_LABEL[res.category]?.toLowerCase() ?? "this"} at ${p.name}, split equally, amount $ to payee@example.com`)}
+                    >
+                      Pay here…
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+            <p className="muted small">Places and taste match by Qloo{res.model ? `; reasons by ${res.model}` : ""}.</p>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
 
 function BillsTab({ pot, actor, call, flash }: { pot: Pot; actor: string; call: Call; flash: (m: string) => void }) {
   const [busy, setBusy] = useState("");

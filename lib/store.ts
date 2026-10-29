@@ -16,7 +16,9 @@ const mem = globalThis as unknown as { __chaipot?: Map<string, Pot> };
 mem.__chaipot ??= new Map();
 const local = mem.__chaipot;
 
-const key = (id: string) => `chaipot:pot:${id}`;
+// STORE_PREFIX lets a second deployment (e.g. the Qloo build) share one Redis without touching the original pots.
+const PREFIX = process.env.STORE_PREFIX || "chaipot";
+const key = (id: string) => `${PREFIX}:pot:${id}`;
 
 export const storeKind = redis ? "redis" : "memory";
 

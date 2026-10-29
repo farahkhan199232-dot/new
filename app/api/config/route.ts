@@ -2,6 +2,7 @@ import { paypalConfigured, paypalEnv } from "@/lib/paypal";
 import { geminiConfigured, GEMINI_MODEL } from "@/lib/gemini";
 import { usdcEnabled } from "@/lib/chain-server";
 import { storeKind } from "@/lib/store";
+import { qlooConfigured } from "@/lib/qloo";
 
 export const dynamic = "force-dynamic";
 
@@ -16,5 +17,6 @@ export async function GET() {
     model: GEMINI_MODEL,
     usdc: usdcEnabled(),
     store: storeKind,
+    taste: qlooConfigured(),
   });
 }

@@ -116,6 +116,7 @@ export interface AuditEntry {
     | "agent_receipt"
     | "agent_request"
     | "agent_needs_info"
+    | "agent_taste"
     | "policy_decision"
     | "approval"
     | "rejection"
