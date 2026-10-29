@@ -6,3 +6,9 @@ export class TwitchIRC { socket?:WebSocket; stopped=false; attempt=0; timer?:num
  private open(){if(this.stopped)return;this.onStatus('reconnecting');const ws=new WebSocket('wss://irc-ws.chat.twitch.tv:443');this.socket=ws;ws.onopen=()=>{this.attempt=0;ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands');ws.send('PASS SCHMOOPIIE');ws.send(`NICK justinfan${Math.floor(Math.random()*900000+100000)}`);ws.send(`JOIN #${this.channel}`);this.onStatus('connected');};ws.onmessage=e=>{for(const line of String(e.data).split('\r\n')){if(line.startsWith('PING')){ws.send('PONG '+line.slice(5));continue;}const m=parseIrcLine(line);if(m.command==='PRIVMSG')this.onMessage(m);}};ws.onclose=()=>this.reconnect();ws.onerror=()=>ws.close(); }
  private reconnect(){if(this.stopped)return;this.onStatus('reconnecting');const delay=Math.min(30000,1000*2**this.attempt++)*(.8+Math.random()*.4);this.timer=window.setTimeout(()=>this.open(),delay);}
 }
+
+export interface LiveChatMessage { displayName:string; color:string; text:string }
+const SAFE_TWITCH_COLOR=/^#[0-9a-f]{6}$/i;
+export function safeChatColor(color:string|undefined):string { return color&&SAFE_TWITCH_COLOR.test(color)?color:'#72563f'; }
+export function escapeChatText(value:string,maxLength=80):string { const clipped=Array.from(value).slice(0,maxLength).join('');return clipped.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!)); }
+export function formatLiveChatMessage(message:IrcMessage):LiveChatMessage { return {displayName:escapeChatText(message.displayName,32),color:safeChatColor(message.tags.color),text:escapeChatText(message.text,80)}; }

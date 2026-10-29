@@ -43,3 +43,5 @@ This project was built with OpenAI Codex.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+The overlay's **Live chat** strip shows the latest four channel messages and a messages-seen count; commands still update the game. The setup page links to Twitch's live directory and provides toggles to include `&demo=1` and `&transparent=1`. Demo mode runs a labelled, roughly 60-second sample story: viewers chip, an over-cap proposal is rejected, a viewer-picked chai proposal brews after yes votes, and a final proposal expires.
