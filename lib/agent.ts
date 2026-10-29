@@ -188,7 +188,8 @@ export async function handleTextRequest(pot: Pot, actor: string, text: string) {
     requester,
     allowed: pot.policy.allowedCategories,
   });
-  const missing = [...(it.missing_info ?? [])];
+  // Only the two facts the policy engine can't default are blocking; models sometimes list extras (e.g. "payer email").
+  const missing = (it.missing_info ?? []).filter((m) => /amount|payee/i.test(m) && !/payer/i.test(m));
   if (!it.is_payment_request) missing.push("a payment request");
   if (!(typeof it.amount === "number" && it.amount > 0) && !missing.some((m) => m.includes("amount"))) missing.push("amount");
   if (!(it.payee_email && isEmail(it.payee_email)) && !missing.some((m) => m.includes("email"))) missing.push("payee email");
