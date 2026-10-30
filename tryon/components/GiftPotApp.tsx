@@ -235,14 +235,14 @@ export default function GiftPotApp({ id }: { id: string }) {
                     <span>{m.name} {m.id === me && <span className="muted small">(you)</span>}</span>
                     <span className="row gap">
                       <span>{formatMoney(share)}</span>
-                      {paid ? <span className="pos">✓ paid</span> : m.id === me && !pot.order ? (
-                        <button className="btn small rose" disabled={!!busy} onClick={() => act("chip", { memberId: me }, "Recording your share…", () => "Thanks for chipping in!")}>Chip in (demo)</button>
+                      {paid ? <span className="pos">✓ paid</span> : (m.id === me || pot.demo) && !pot.order ? (
+                        <button className="btn small rose" disabled={!!busy} onClick={() => act("chip", { memberId: m.id }, `Recording ${m.name}'s share…`, () => `${m.name} chipped in`)}>{m.id === me ? "Chip in (demo)" : `Pay as ${m.name} (demo)`}</button>
                       ) : <span className="muted small">pending</span>}
                     </span>
                   </div>
                 );
               })}
-              {pot.demo && !pot.order && <p className="muted small" style={{ marginTop: 6 }}>Tip: switch "I am" to each friend to chip in for them.</p>}
+              {pot.demo && !pot.order && <p className="muted small" style={{ marginTop: 6 }}>Demo pot: you can pay for each friend to see the whole flow.</p>}
               {pot.order && (
                 <div className="card" style={{ marginTop: 12, background: "#eef8f0", borderColor: "#cfe8d5" }}>
                   <b className="pos">Gift ordered 🎁</b>
