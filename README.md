@@ -1,3 +1,5 @@
+> **YouCam API Skin AI & eCommerce VTO Hackathon entry: [Chai Pot Try-On](tryon/README.md)** lives in [`tryon/`](tryon/) on this `youcam-vto` branch. Live: https://chai-pot-tryon.vercel.app
+
 # Chai Pot ☕
 
 **A shared group wallet where an AI agent pays the group's bills, within limits the members set.**
