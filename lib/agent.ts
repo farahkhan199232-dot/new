@@ -140,7 +140,7 @@ async function addPayeeCheck(pot: Pot, spend: Spend, reasons: string[]) {
     actor: "agent",
     kind: "risk_review",
     spendId: spend.id,
-    summary: `Web check (${r.risk} risk) on ${spend.payeeName || spend.payeeEmail} for ${formatMoney(spend.amount, pot.currency)}`,
+    summary: `Web check (${r.risk} risk) on ${spend.payeeName || spend.description} for ${formatMoney(spend.amount, pot.currency)}`,
     reasoning: [r.summary, ...(r.questions_for_approvers ?? []).slice(0, 3).map((q) => `Check: ${q}`)].join(" "),
     data: { model: r._model, gateway: "Otari", tool: "otari_web_search", sources: r.sources, advisory: true },
   });
@@ -235,7 +235,9 @@ export async function handleReceipt(pot: Pot, actor: string, imageBase64: string
   // Re-add the receipt in Otari's code-execution sandbox rather than trusting model arithmetic.
   const ac = otariCtx(pot, "receipt-code-audit");
   const { _model: _m, ...forAudit } = r;
-  const math = await auditReceiptWithCode(JSON.stringify(forAudit), ac.tags, ac.session);
+  const audited = await auditReceiptWithCode(JSON.stringify(forAudit), ac.tags, ac.session);
+  const math = audited && "matches" in audited ? audited : null;
+  const mathError = audited && "error" in audited ? audited.error : undefined;
   const conv = toPotCurrency(pot, r.total, r.currency);
   const rate = conv.original?.rate ?? 1;
   const items: ReceiptItem[] = (r.items ?? []).map((i) => ({
@@ -260,6 +262,7 @@ export async function handleReceipt(pot: Pot, actor: string, imageBase64: string
     data: {
       model: r._model,
       mathCheck: math ?? undefined,
+      mathCheckError: mathError,
       requestedBy: memberName(pot, actor),
       requestedById: actor,
       receipt: r,

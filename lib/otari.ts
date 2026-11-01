@@ -131,10 +131,17 @@ export async function otariChat(o: {
     cache: "no-store",
     signal: AbortSignal.timeout(o.timeoutMs),
   });
-  const d = await r.json().catch(() => ({}));
+  const raw = await r.text();
+  let d: any = {};
+  try {
+    d = JSON.parse(raw);
+  } catch {
+    /* non-JSON error page */
+  }
   if (!r.ok) {
-    const msg = d.error?.message ?? (typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail ?? "request failed"));
-    throw new OtariError(r.status, String(msg).slice(0, 300));
+    const code = r.headers.get("otari-error-code");
+    const msg = d.error?.message ?? (typeof d.detail === "string" ? d.detail : d.detail ? JSON.stringify(d.detail) : raw || "request failed");
+    throw new OtariError(r.status, `${code ? `[${code}] ` : ""}${String(msg).slice(0, 400)}`);
   }
   const text: string = d.choices?.[0]?.message?.content ?? "";
   const out: OtariReply = { text, model: d.model || o.model, requestId: r.headers.get("x-request-id") ?? d.id, usage: d.usage };
@@ -235,29 +242,41 @@ const auditSchema = {
  * (items + tax + service + tip vs the printed total) instead of trusting model arithmetic.
  * Advisory: the payable amount is always the printed total; a mismatch is flagged to members.
  */
-export async function auditReceiptWithCode(receiptJson: string, tags: Tags, session: string, timeoutMs = 35_000): Promise<(ReceiptAudit & { _model: string }) | null> {
+export async function auditReceiptWithCode(
+  receiptJson: string,
+  tags: Tags,
+  session: string,
+  timeoutMs = 45_000,
+): Promise<(ReceiptAudit & { _model: string }) | { error: string } | null> {
   if (!KEY) return null;
-  try {
-    const out = await otariChat({
-      model: OTARI_TOOL_MODEL,
-      tools: ["otari_code_execution"],
-      maxToolIterations: 3,
-      schema: auditSchema,
-      timeoutMs,
-      maxTokens: 1500,
-      tags: { ...tags, feature: "receipt-code-audit" },
-      session,
-      system: [
-        "You audit a receipt that was already extracted to JSON. Run Python with the code execution tool to add the line totals,",
-        "then add tax, service_charge and tip (null = 0), and compare with the printed total (tolerance 1.0).",
-        "Reply with ONLY a JSON object: {\"items_sum\":n,\"computed_total\":n,\"printed_total\":n,\"difference\":n,\"matches\":bool,\"note\":\"one sentence\"}.",
-      ].join(" "),
-      content: receiptJson.slice(0, 6000),
-    });
-    const r = out.json as ReceiptAudit;
-    if (r && typeof r.matches === "boolean") return { ...r, _model: out.model };
-  } catch {
-    /* advisory only */
+  const deadline = Date.now() + timeoutMs;
+  let last = "";
+  for (const model of [OTARI_TOOL_MODEL, OTARI_FALLBACK_MODEL].filter((m, i, a) => a.indexOf(m) === i)) {
+    const left = deadline - Date.now();
+    if (left < 5_000) break;
+    try {
+      const out = await otariChat({
+        model,
+        tools: ["otari_code_execution"],
+        maxToolIterations: 3,
+        schema: auditSchema,
+        timeoutMs: left,
+        maxTokens: 1500,
+        tags: { ...tags, feature: "receipt-code-audit" },
+        session,
+        system: [
+          "You audit a receipt that was already extracted to JSON. Run Python with the code execution tool to add the line totals,",
+          "then add tax, service_charge and tip (null = 0), and compare with the printed total (tolerance 1.0).",
+          "Reply with ONLY a JSON object: {\"items_sum\":n,\"computed_total\":n,\"printed_total\":n,\"difference\":n,\"matches\":bool,\"note\":\"one sentence\"}.",
+        ].join(" "),
+        content: receiptJson.slice(0, 6000),
+      });
+      const r = out.json as ReceiptAudit;
+      if (r && typeof r.matches === "boolean") return { ...r, _model: out.model };
+      last = "reply had no audit fields";
+    } catch (e) {
+      last = [last, `${model}: ${(e as Error).message}`.slice(0, 400)].filter(Boolean).join(" | ");
+    }
   }
-  return null;
+  return { error: last || "no time left" };
 }
