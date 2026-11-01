@@ -116,3 +116,4 @@ footer { margin-top: 32px; font-size: 12px; color: var(--muted); }
 .reply.ok { border-color: #9fd3ae; background: #f1faf3; }
 .reply.bad { border-color: #f1b3ab; background: #fdf1ef; }
 .btn.rec { background: var(--bad); color: #fff; }
+.row .btn { width: auto; }

@@ -2,7 +2,7 @@
 
 **An AI agent that keeps a women's self-help group's savings pot, in plain Hindi and English.**
 
-Live: https://chai-pot-shg.vercel.app (demo group: `/g/demo`, sample data, not a real group)
+Live: https://chai-pot-shg.vercel.app (demo group: `/g/demo`, sample data, not a real group) · Demo video (2:15): https://youtu.be/kKd6wEce-dQ
 Built for **Code for a Billion: Bharat Agentic-AI Hackathon 2026** (Code for India), impact area *Livelihood for the Uneducated*.
 
 ## The problem

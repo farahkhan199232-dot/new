@@ -149,10 +149,10 @@ export default function ShgApp({ id }: { id: string }) {
             </select>
           </label>
         </div>
-        <form onSubmit={(e) => { e.preventDefault(); say(); }} className="row" style={{ gap: 6, marginTop: 6 }}>
-          <input value={text} onChange={(e) => setText(e.target.value)} placeholder={lang === "hi" ? "जैसे: लता ने 200 जमा किए" : "e.g. Lata ne 200 jama kiye"} style={{ flex: 1 }} />
-          <button type="button" className={"btn ghost" + (listening ? " rec" : "")} onClick={mic} aria-label="Speak">🎤</button>
-          <button className="btn" disabled={busy}>{busy ? "…" : T.send[lang]}</button>
+        <form onSubmit={(e) => { e.preventDefault(); say(); }} className="row" style={{ gap: 6, marginTop: 6, flexWrap: "nowrap" }}>
+          <input value={text} onChange={(e) => setText(e.target.value)} placeholder={lang === "hi" ? "जैसे: लता ने 200 जमा किए" : "e.g. Lata ne 200 jama kiye"} style={{ flex: "1 1 auto", minWidth: 0, width: "auto" }} />
+          <button type="button" style={{ flex: "0 0 auto", width: "auto" }} className={"btn ghost" + (listening ? " rec" : "")} onClick={mic} aria-label="Speak">🎤</button>
+          <button className="btn" style={{ flex: "0 0 auto", width: "auto" }} disabled={busy}>{busy ? "…" : T.send[lang]}</button>
         </form>
         <div className="row wrap" style={{ gap: 6, marginTop: 8, justifyContent: "flex-start" }}>
           {EXAMPLES.map((x) => <button key={x} className="chip" onClick={() => say(x)} disabled={busy}>{x}</button>)}
