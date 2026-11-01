@@ -11,7 +11,14 @@ export const expenseFields = {
     .enum(["equal", "exact", "percent", "shares"])
     .default("equal")
     .describe("equal: split evenly among splitWith (or everyone). exact/percent/shares: use splitValues"),
-  splitWith: z.array(z.string()).optional().describe("For equal: member ids or names sharing the bill; omit for everyone"),
+  splitWith: z
+    .array(z.string())
+    .optional()
+    .describe("For equal: the ONLY people sharing the bill (ids or names). Omit for everyone. The payer is not added automatically"),
+  exclude: z
+    .array(z.string())
+    .optional()
+    .describe('For equal: people to leave out, e.g. "everyone except Ravi" -> exclude ["Ravi"] and omit splitWith. The payer stays in unless listed'),
   splitValues: z
     .record(z.string(), z.number())
     .optional()

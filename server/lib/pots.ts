@@ -107,6 +107,7 @@ export interface ExpenseInput {
   paidBy: string;
   splitMode?: SplitMode | undefined;
   splitWith?: string[] | undefined;
+  exclude?: string[] | undefined;
   splitValues?: Record<string, number> | undefined;
   date?: string | undefined;
 }
@@ -139,7 +140,10 @@ export async function insertExpense(
   let splits: Record<string, number>;
   try {
     if (mode === "equal") {
-      const ids = (input.splitWith ?? []).map((r) => resolveMember(members, r));
+      const base = input.splitWith?.length ? input.splitWith.map((r) => resolveMember(members, r)) : memberIds;
+      const out = new Set((input.exclude ?? []).map((r) => resolveMember(members, r)));
+      const ids = base.filter((id) => !out.has(id));
+      if (!ids.length) fail("Nobody is left to split this bill with.", { errorCode: "invalid_split" });
       splits = computeSplits(amount, { mode, participantIds: ids }, memberIds);
     } else {
       const values: Record<string, number> = {};
