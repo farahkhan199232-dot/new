@@ -6,7 +6,7 @@ Built at NEAR HACKATHON (1–14 Nov 2026) on branch [`near-pot`](https://github.
 
 - **Live demo:** https://chai-pot-near.vercel.app (demo pot, no wallet needed: https://chai-pot-near.vercel.app/near/p/1)
 - **Contract:** [`chai-pot-near.testnet`](https://testnet.nearblocks.io/address/chai-pot-near.testnet) · **Agent:** [`chai-pot-agent.testnet`](https://testnet.nearblocks.io/address/chai-pot-agent.testnet)
-- **Demo video:** VIDEO_URL
+- **Demo video:** https://youtu.be/PSMzKoliFic
 - **Tracks:** AI Security & Defense (`security`), Social Money (`social`), Agent Economy (`agents`)
 - **What was built during the hackathon:** everything under `contracts/near/`, `lib/near/`, `app/near/`, `app/api/near/`, `components/near/` (diff: [`pre-hackathon...near-pot`](https://github.com/farahkhan199232-dot/new/compare/pre-hackathon...near-pot)). The rest of the repo is the pre-existing Chai Pot (PayPal) app, see "Baseline" below.
 
