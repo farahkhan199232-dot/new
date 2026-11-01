@@ -41,7 +41,7 @@ const selectCls = "h-9 w-full rounded-md border bg-background px-2 text-sm";
 
 function Card({ title, icon, children, className }: { title: string; icon?: React.ReactNode; children: React.ReactNode; className?: string }) {
   return (
-    <section className={cn("grid content-start gap-3 rounded-xl border bg-card p-4", className)}>
+    <section className={cn("grid min-w-0 content-start gap-3 rounded-xl border bg-card p-4", className)}>
       <h2 className="flex items-center gap-2 text-sm font-semibold">
         {icon}
         {title}
@@ -140,14 +140,14 @@ function PotView({ data }: { data: PotData }) {
         </div>
       </header>
 
-      <div className="grid gap-5 @4xl:grid-cols-[360px_1fr]">
-        <div className="grid content-start gap-5">
+      <div className="grid gap-5 @4xl:grid-cols-[360px_minmax(0,1fr)]">
+        <div className="grid min-w-0 content-start gap-5">
           <AddExpense potId={pot.id} currency={cur} members={members} />
           <AskCopilot onAsk={ask} />
           <Members potId={pot.id} members={members} />
         </div>
 
-        <div className="@container grid content-start gap-5">
+        <div className="@container grid min-w-0 content-start gap-5">
           {pending.length > 0 && (
             <Card title="Waiting for a person to approve" icon={<IconShieldCheck className="size-4 text-amber-600" />} className="border-amber-500/50">
               <ul className="grid gap-3">
@@ -158,7 +158,7 @@ function PotView({ data }: { data: PotData }) {
             </Card>
           )}
 
-          <div className="grid gap-5 @lg:grid-cols-2">
+          <div className="grid gap-5 @lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
             <Card title="Balances" icon={<IconScale className="size-4" />}>
               <ul className="grid gap-1.5">
                 {balances.map((b) => (
@@ -194,7 +194,7 @@ function PotView({ data }: { data: PotData }) {
             )}
           </Card>
 
-          <div className="grid gap-5 @lg:grid-cols-2">
+          <div className="grid gap-5 @lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
             <RulesCard potId={pot.id} currency={cur} rules={rules} />
             <Card title="Activity">
               <ul className="grid max-h-72 gap-2 overflow-y-auto text-xs">
