@@ -118,7 +118,7 @@ function PotView({ data }: { data: PotData }) {
   const ask = (message: string) => sendToAgentChat({ message, submit: true, context: `Current pot: ${pot.name} (potId ${pot.id})` });
 
   return (
-    <main className="mx-auto grid w-full max-w-6xl gap-5 p-4 md:p-6">
+    <main className="@container mx-auto grid w-full max-w-6xl gap-5 p-4 md:p-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <Link to="/pots" className="text-xs text-muted-foreground hover:underline">
@@ -140,14 +140,14 @@ function PotView({ data }: { data: PotData }) {
         </div>
       </header>
 
-      <div className="grid gap-5 lg:grid-cols-[380px_1fr]">
+      <div className="grid gap-5 @4xl:grid-cols-[360px_1fr]">
         <div className="grid content-start gap-5">
           <AddExpense potId={pot.id} currency={cur} members={members} />
           <AskCopilot onAsk={ask} />
           <Members potId={pot.id} members={members} />
         </div>
 
-        <div className="grid content-start gap-5">
+        <div className="@container grid content-start gap-5">
           {pending.length > 0 && (
             <Card title="Waiting for a person to approve" icon={<IconShieldCheck className="size-4 text-amber-600" />} className="border-amber-500/50">
               <ul className="grid gap-3">
@@ -158,7 +158,7 @@ function PotView({ data }: { data: PotData }) {
             </Card>
           )}
 
-          <div className="grid gap-5 md:grid-cols-2">
+          <div className="grid gap-5 @lg:grid-cols-2">
             <Card title="Balances" icon={<IconScale className="size-4" />}>
               <ul className="grid gap-1.5">
                 {balances.map((b) => (
@@ -194,7 +194,7 @@ function PotView({ data }: { data: PotData }) {
             )}
           </Card>
 
-          <div className="grid gap-5 md:grid-cols-2">
+          <div className="grid gap-5 @lg:grid-cols-2">
             <RulesCard potId={pot.id} currency={cur} rules={rules} />
             <Card title="Activity">
               <ul className="grid max-h-72 gap-2 overflow-y-auto text-xs">

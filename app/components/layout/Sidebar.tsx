@@ -414,7 +414,7 @@ export function Sidebar({
           to="/pots"
           aria-label={collapsed ? "Pots" : undefined}
           className={cn(
-            "flex items-center gap-2 rounded-md text-sm text-sidebar-foreground hover:bg-sidebar-accent",
+            "flex items-center gap-2 rounded-md text-sm text-sidebar-accent-foreground hover:bg-sidebar-accent",
             collapsed ? "size-8 justify-center" : "mx-2 px-2 py-1.5",
             location.pathname.startsWith("/pots") && "bg-sidebar-accent font-medium",
           )}
