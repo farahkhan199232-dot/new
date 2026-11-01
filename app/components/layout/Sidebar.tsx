@@ -14,6 +14,7 @@ import { OrgSwitcher } from "@agent-native/toolkit/app/org";
 import { openCommandMenu } from "@agent-native/toolkit/app/shared";
 import { AgentNativeIcon } from "@agent-native/toolkit/app/shared/AgentNativeIcon";
 import {
+  IconCoins,
   IconEdit,
   IconHome,
   IconLayoutSidebarLeftCollapse,
@@ -310,6 +311,7 @@ export function Sidebar({
   onCollapsedChange,
 }: SidebarProps) {
   const t = useT();
+  const location = useLocation();
   const ToggleIcon = collapsed
     ? IconLayoutSidebarLeftExpand
     : IconLayoutSidebarLeftCollapse;
@@ -408,6 +410,18 @@ export function Sidebar({
         )}
       >
         <HomeNavLink collapsed={collapsed} />
+        <Link
+          to="/pots"
+          aria-label={collapsed ? "Pots" : undefined}
+          className={cn(
+            "flex items-center gap-2 rounded-md text-sm text-sidebar-foreground hover:bg-sidebar-accent",
+            collapsed ? "size-8 justify-center" : "mx-2 px-2 py-1.5",
+            location.pathname.startsWith("/pots") && "bg-sidebar-accent font-medium",
+          )}
+        >
+          <IconCoins className="size-4 shrink-0" />
+          {collapsed ? null : <span>Pots</span>}
+        </Link>
         <ChatThreadsSection collapsed={collapsed} />
       </nav>
 

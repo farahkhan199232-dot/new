@@ -18,6 +18,7 @@ export interface NavigationState {
   path?: string;
   publicPath?: string;
   threadId?: string;
+  potId?: string;
 }
 
 export function useNavigationState() {
@@ -64,7 +65,9 @@ function matchesPathPrefix(pathname: string, prefix: string): boolean {
 
 export function navigationStateForPath(pathname: string): NavigationState {
   const threadId = threadIdFromPath(pathname);
+  const potMatch = /^\/pots\/([^/?#]+)/.exec(pathname);
   return {
+    ...(potMatch?.[1] ? { potId: decodeURIComponent(potMatch[1]) } : {}),
     view: viewForPath(pathname),
     path: pathname,
     publicPath: appPathFromLocalRoute(pathname),
@@ -75,6 +78,7 @@ export function navigationStateForPath(pathname: string): NavigationState {
 function viewForPath(pathname: string): string {
   if (isChatPathname(pathname)) return "chat";
   if (pathname === HOME_PATH) return "home";
+  if (pathname.startsWith("/pots")) return "pots";
   if (pathname.startsWith("/database")) return "database";
   if (pathname.startsWith("/extensions")) return "extensions";
   if (pathname.startsWith("/observability")) return "observability";
@@ -93,6 +97,8 @@ function pathForView(view?: string): string {
       return NEW_CHAT_PATH;
     case "home":
       return HOME_PATH;
+    case "pots":
+      return "/pots";
     case "database":
       return "/database";
     case "extensions":
@@ -111,6 +117,9 @@ function pathForView(view?: string): string {
 }
 
 export function pathForCommand(command: any): string {
+  if (command?.view === "pots" && typeof command?.potId === "string" && command.potId) {
+    return `/pots/${encodeURIComponent(command.potId)}`;
+  }
   const path = pathForView(command?.view);
   if (command?.view !== "chat" && command?.view !== "ask") return path;
   const threadId =

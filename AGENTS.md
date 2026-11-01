@@ -31,3 +31,23 @@ Use `adding-a-feature` for functional parity and `frontend-design` for a user-fa
 Before building common workspace or agent UI, read `agent-native-toolkit`; for supported customization, read `customizing-agent-native`.
 
 - Guarded verification: run `pnpm agent-native:doctor`; fix findings before done.
+
+## SplitChai Pot Copilot (domain)
+
+Group-expense pots. Routes: `/pots` (list + create), `/pots/:potId` (bill form, approvals, balances, settle-up, expenses, rules, activity). `navigation.view` is `pots`, `navigation.potId` is the open pot.
+
+Invariants (enforced in actions, never the UI): every expense runs through the pot's rules (`server/lib/splitchai.ts` evaluateRules). Category not allowed -> `rejected`; over per-bill or daily cap -> `pending_approval`; else `approved`. Only `approved` expenses count in balances. `review-expense` refuses agent callers (403 `human_approval_required`): approvals are human-only. Pot row is locked per write so the daily cap cannot be raced. Splits always sum to the bill (minor units).
+
+Amounts: action inputs are MAJOR units (2400.50); stored/returned as integer minor units plus `*Formatted`. Days are `YYYY-MM-DD` in the pot timezone.
+
+| Action | Use |
+|---|---|
+| list-pots | pots the user can see |
+| get-pot | members, rules, balances, transfers, expenses, activity |
+| create-pot | new pot with members + rules |
+| add-member | add a person |
+| add-expense / add-expenses | one bill / batch from a receipt or chat |
+| review-expense | people only: approve/reject pending |
+| void-expense | remove a mistaken bill |
+| update-rules | caps, categories, approvals |
+| record-settlement | record a payback (no money moves) |

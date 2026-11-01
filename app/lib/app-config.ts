@@ -1,5 +1,5 @@
 const rawAppName = "spc";
-const rawAppTitle = "Spc";
+const rawAppTitle = "SplitChai Copilot";
 
 const APP_NAME_PLACEHOLDER = "{" + "{APP_NAME}}";
 const APP_TITLE_PLACEHOLDER = "{" + "{APP_TITLE}}";
