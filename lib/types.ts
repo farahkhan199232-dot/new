@@ -95,6 +95,8 @@ export interface Spend {
   error?: string;
   items?: ReceiptItem[];
   sample?: boolean;
+  /** Advisory payee web check (Otari web search) for bills held for approval. */
+  review?: { risk: "low" | "medium" | "high"; summary: string; questions: string[]; sources?: string[]; model: string };
 }
 
 export interface PolicyCheck {
@@ -122,6 +124,7 @@ export interface AuditEntry {
     | "payout"
     | "payout_failed"
     | "refund"
+    | "risk_review"
     | "error";
   summary: string;
   /** Free-text model reasoning, shown verbatim. */

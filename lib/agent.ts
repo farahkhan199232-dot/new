@@ -3,12 +3,13 @@ import { CATEGORIES } from "./types";
 import { convertMinor, formatMoney, majorToMinor, splitEqual } from "./money";
 import { evaluatePolicy, isEmail, spentOnDay } from "./policy";
 import { computeLedger } from "./ledger";
-import { GEMINI_MODEL, interpretRequest, parseReceipt, type ReceiptParse } from "./gemini";
+import { AI_MODEL_LABEL, interpretRequest, parseReceipt, type ReceiptParse } from "./ai";
+import { auditReceiptWithCode, checkPayeeOnWeb } from "./otari";
 import { createPayout, getPayoutBatch, paypalConfigured, PayPalNotConfigured } from "./paypal";
 import { audit, newId } from "./store";
 
 /**
- * The Chai Pot agent. Gemini interprets (receipt photo or plain-language request);
+ * The Chai Pot agent. An open-weight model behind the Otari gateway interprets (receipt photo or plain-language request);
  * the deterministic policy engine decides; PayPal Payouts executes. Every step is
  * written to the pot's audit log with the model's reasoning and the policy checks.
  */
@@ -103,11 +104,46 @@ async function decideAndAct(pot: Pot, p: Proposal): Promise<Spend> {
     checks: result.checks,
     summary: `${verb} ${formatMoney(p.amount, pot.currency)} to ${p.payeeName || p.payeeEmail || "unknown payee"} (${result.reasons.join("; ")})`,
     reasoning: `${p.reasoning}${fx}`.trim(),
-    data: { model: GEMINI_MODEL, requestedBy: memberName(pot, p.requestedBy), ...p.source },
+    data: { model: AI_MODEL_LABEL, requestedBy: memberName(pot, p.requestedBy), ...p.source },
   });
 
   if (result.decision === "auto_pay") await executeSpend(pot, spend);
+  if (result.decision === "needs_approval") await addPayeeCheck(pot, spend, result.reasons);
   return spend;
+}
+
+/** Otari cost tags + trace session for every model call made for this pot. */
+const otariCtx = (pot: Pot, feature: string) => ({ tags: { pot: pot.isDemo ? "demo" : "user", feature }, session: `chai-pot:${pot.id}` });
+
+/**
+ * A bill the policy held gets a web-search payee check through Otari's gateway-run
+ * otari_web_search tool. Advisory only; never blocks the flow.
+ */
+async function addPayeeCheck(pot: Pot, spend: Spend, reasons: string[]) {
+  const history = pot.spends
+    .filter((s) => s.id !== spend.id)
+    .slice(0, 10)
+    .map((s) => `- ${formatMoney(s.amount, pot.currency)} ${s.category} to ${s.payeeName || s.payeeEmail} (${s.status})`)
+    .join("\n");
+  const context = [
+    `Pot: ${pot.name} (${pot.currency}), ${pot.members.length} members`,
+    `Held bill: ${spend.description}; ${formatMoney(spend.amount, pot.currency)}; category ${spend.category}; payee ${spend.payeeName || ""} <${spend.payeeEmail}>`,
+    spend.items?.length ? `Items: ${spend.items.map((i) => `${i.quantity} x ${i.name}`).join(", ")}` : "",
+    `Why the policy held it: ${reasons.join("; ")}`,
+    `Recent bills:\n${history || "(none)"}`,
+  ].filter(Boolean).join("\n");
+  const c = otariCtx(pot, "payee-web-check");
+  const r = await checkPayeeOnWeb(context, c.tags, c.session);
+  if (!r) return;
+  spend.review = { risk: r.risk, summary: r.summary, questions: (r.questions_for_approvers ?? []).slice(0, 3), sources: r.sources, model: r._model };
+  audit(pot, {
+    actor: "agent",
+    kind: "risk_review",
+    spendId: spend.id,
+    summary: `Web check (${r.risk} risk) on ${spend.payeeName || spend.payeeEmail} for ${formatMoney(spend.amount, pot.currency)}`,
+    reasoning: [r.summary, ...(r.questions_for_approvers ?? []).slice(0, 3).map((q) => `Check: ${q}`)].join(" "),
+    data: { model: r._model, gateway: "Otari", tool: "otari_web_search", sources: r.sources, advisory: true },
+  });
 }
 
 /** Send the PayPal payout. Never marks a spend paid unless PayPal accepted it. */
@@ -149,17 +185,21 @@ export async function syncPayout(pot: Pot, spend: Spend) {
   spend.payout = { ...spend.payout, ...s };
 }
 
-/** Plain-language request -> Gemini -> policy -> act. */
+/** Plain-language request -> Otari (open-weight model) -> policy -> act. */
 export async function handleTextRequest(pot: Pot, actor: string, text: string) {
   const requester = memberName(pot, actor);
-  const it = await interpretRequest({
-    text,
-    potCurrency: pot.currency,
-    members: pot.members.map((m) => m.name),
-    requester,
-    allowed: pot.policy.allowedCategories,
-  });
-  const missing = [...(it.missing_info ?? [])];
+  const it = await interpretRequest(
+    {
+      text,
+      potCurrency: pot.currency,
+      members: pot.members.map((m) => m.name),
+      requester,
+      allowed: pot.policy.allowedCategories,
+    },
+    otariCtx(pot, "spend-request"),
+  );
+  // Only the two facts the policy engine can't default are blocking; models sometimes list extras.
+  const missing = (it.missing_info ?? []).filter((m) => /amount|payee/i.test(m) && !/payer/i.test(m));
   if (!it.is_payment_request) missing.push("a payment request");
   if (!(typeof it.amount === "number" && it.amount > 0) && !missing.some((m) => m.includes("amount"))) missing.push("amount");
   if (!(it.payee_email && isEmail(it.payee_email)) && !missing.some((m) => m.includes("email"))) missing.push("payee email");
@@ -190,8 +230,12 @@ export async function handleTextRequest(pot: Pot, actor: string, text: string) {
 
 /** Receipt photo -> itemized JSON + suggested equal split. Stored in the audit log for the pay step. */
 export async function handleReceipt(pot: Pot, actor: string, imageBase64: string, mimeType: string) {
-  const r = await parseReceipt(imageBase64, mimeType);
+  const r = await parseReceipt(imageBase64, mimeType, otariCtx(pot, "receipt-read"));
   if (!(r.total > 0)) throw new Error(`Could not read a total from this receipt${r.notes ? `: ${r.notes}` : ""}`);
+  // Re-add the receipt in Otari's code-execution sandbox rather than trusting model arithmetic.
+  const ac = otariCtx(pot, "receipt-code-audit");
+  const { _model: _m, ...forAudit } = r;
+  const math = await auditReceiptWithCode(JSON.stringify(forAudit), ac.tags, ac.session);
   const conv = toPotCurrency(pot, r.total, r.currency);
   const rate = conv.original?.rate ?? 1;
   const items: ReceiptItem[] = (r.items ?? []).map((i) => ({
@@ -204,9 +248,18 @@ export async function handleReceipt(pot: Pot, actor: string, imageBase64: string
     actor: "agent",
     kind: "agent_receipt",
     summary: `Read receipt from ${r.merchant}: ${items.length} items, total ${formatMoney(conv.amount, pot.currency)}`,
-    reasoning: r.notes || undefined,
+    reasoning:
+      [
+        r.notes,
+        math
+          ? `Math check (Otari code execution): items ${math.items_sum} + extras = ${math.computed_total} vs printed ${math.printed_total}: ${math.matches ? "adds up" : `off by ${math.difference}`}. ${math.note}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" ") || undefined,
     data: {
       model: r._model,
+      mathCheck: math ?? undefined,
       requestedBy: memberName(pot, actor),
       requestedById: actor,
       receipt: r,
@@ -238,7 +291,7 @@ export async function payReceipt(pot: Pot, actor: string, receiptAuditId: string
     items: d.items,
     reasoning: `Receipt total read by the agent; split equally between ${(ids.length ? ids : pot.members.map((m) => m.id)).map((i) => memberName(pot, i)).join(", ")}.`,
     requestedBy: actor,
-    source: { receiptAuditId, model: (e.data as { model?: string }).model ?? GEMINI_MODEL },
+    source: { receiptAuditId, model: (e.data as { model?: string }).model ?? AI_MODEL_LABEL },
   });
   (e.data as { spendId?: string }).spendId = spend.id;
   return spend;

@@ -1,5 +1,6 @@
 import { paypalConfigured, paypalEnv } from "@/lib/paypal";
-import { geminiConfigured, GEMINI_MODEL } from "@/lib/gemini";
+import { aiConfigured, AI_MODEL_LABEL, AI_PROVIDER } from "@/lib/ai";
+import { OTARI_FALLBACK_MODEL, OTARI_TOOL_MODEL } from "@/lib/otari";
 import { usdcEnabled } from "@/lib/chain-server";
 import { storeKind } from "@/lib/store";
 
@@ -12,8 +13,12 @@ export async function GET() {
     paypal: paypalConfigured() && !!clientId,
     paypalClientId: paypalConfigured() ? clientId : "",
     paypalEnv,
-    ai: geminiConfigured(),
-    model: GEMINI_MODEL,
+    ai: aiConfigured(),
+    model: AI_MODEL_LABEL,
+    provider: AI_PROVIDER,
+    fallbackModel: OTARI_FALLBACK_MODEL,
+    toolModel: OTARI_TOOL_MODEL,
+    otariTools: ["otari_web_search", "otari_code_execution"],
     usdc: usdcEnabled(),
     store: storeKind,
   });

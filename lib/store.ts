@@ -16,7 +16,8 @@ const mem = globalThis as unknown as { __chaipot?: Map<string, Pot> };
 mem.__chaipot ??= new Map();
 const local = mem.__chaipot;
 
-const key = (id: string) => `chaipot:pot:${id}`;
+const PREFIX = process.env.STORE_PREFIX || "chaipot";
+const key = (id: string) => `${PREFIX}:pot:${id}`;
 
 export const storeKind = redis ? "redis" : "memory";
 

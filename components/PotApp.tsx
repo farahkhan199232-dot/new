@@ -110,7 +110,7 @@ export function PotApp({ id }: { id: string }) {
       {pot.isDemo && (
         <div className="notice" style={{ marginBottom: 10 }}>
           Demo pot. Entries marked <span className="badge sample">sample</span> are seeded; anything you do here runs for real against PayPal
-          sandbox and Gemini. Switch &ldquo;You are&rdquo; to act as another member.{" "}
+          sandbox and open-weight models through the Otari AI gateway. Switch &ldquo;You are&rdquo; to act as another member.{" "}
           <a
             href="#"
             onClick={(e) => {
@@ -129,7 +129,7 @@ export function PotApp({ id }: { id: string }) {
       )}
       {config && !config.ai && (
         <div className="notice bad" style={{ marginBottom: 10 }}>
-          AI agent not configured (GEMINI_API_KEY missing). Receipt reading and requests are disabled.
+          AI agent not configured (OTARI_API_KEY missing). Receipt reading and requests are disabled.
         </div>
       )}
 
@@ -708,6 +708,22 @@ function BillsTab({ pot, actor, call, flash }: { pot: Pot; actor: string; call: 
               <div className="muted small">
                 Approvals {s.approvals.length}/{pot.policy.approvalsRequired}
                 {s.approvals.length > 0 && `: ${s.approvals.map((a) => name(pot, a)).join(", ")}`}
+              </div>
+            )}
+            {s.review && (
+              <div className="reasoning small">
+                🔎 <strong>Otari web check · {s.review.risk} risk</strong> (advisory): {s.review.summary}
+                {s.review.questions.length > 0 && <div>Check: {s.review.questions.join(" · ")}</div>}
+                {!!s.review.sources?.length && (
+                  <div>
+                    Sources:{" "}
+                    {s.review.sources.map((u, i) => (
+                      <a key={u} href={u} target="_blank" rel="noreferrer">
+                        [{i + 1}]{" "}
+                      </a>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             {s.payout && (

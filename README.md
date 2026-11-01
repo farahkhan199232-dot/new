@@ -1,5 +1,7 @@
 # Chai Pot ☕
 
+> **Otari branch (`otari-wilding`)** for Mozilla.ai's *Developers Wilding: Online* hackathon. Every model call now goes through the [Otari](https://otari.ai) hosted AI gateway to open-weight models (Qwen3.5 35B A3B, falling back to DeepSeek V4 Flash), instead of calling Gemini directly. Otari features used: OpenAI-compatible gateway with one workspace key, open-weight model catalog + fallback routing, gateway-run `otari_web_search` (payee check on held bills), gateway-run `otari_code_execution` (receipt math audit), per-request `metadata` cost tags and `session_label` traces (Usage tab by feature and pot). Live: https://chai-pot-otari.vercel.app/p/demo
+
 **A shared group wallet where an AI agent pays the group's bills, within limits the members set.**
 
 Built for the PayPal AI Hackathon 2026. PayPal sandbox only: no real money moves.
@@ -20,7 +22,7 @@ AI agents can now pay for things, but a group will only let an agent touch share
    - allowed categories (food, groceries, transport, stay, …)
    - how many approvals a bill above a cap needs (from members other than the requester)
 2. **Fund it with PayPal**: each member pays their share with PayPal Checkout (JS SDK buttons). The server creates the order and captures it with the **Orders API v2**, and records the contribution only from PayPal's capture response (amount, currency, `custom_id` = pot + member). Optional: USDC on Base through the pre-existing SplitChai settlement contract.
-3. **Ask the agent (Gemini)**:
+3. **Ask the agent (open-weight models via Otari)**:
    - **Receipt photo → itemized JSON** (merchant, line items, tax, total, category) and a suggested equal split you can adjust.
    - **Plain-language request** such as *"pay the ₹2,400 dinner at Saravana to host@example.com"* → the agent extracts amount, currency, payee, category and split, with its reasoning.
 4. **Policy engine decides**: a deterministic rules engine checks funds, category, payee, per-bill cap and daily cap.
@@ -30,7 +32,7 @@ AI agents can now pay for things, but a group will only let an agent touch share
 5. **Ledger + refunds**: each member's contributions, share of paid bills and balance. A member can take unspent money back with a **Captures refund (Payments API v2)** on their own PayPal payment, capped at their balance.
 6. **Audit log**: every model interpretation (raw JSON included), policy check, approval, payout, refund and failure, newest first.
 
-A **seeded demo pot** (`/p/demo`) lets judges click through immediately. Seeded entries are labelled *sample*; anything you do in the demo runs for real against PayPal sandbox and Gemini. "You are …" switches which member you act as, so you can approve as someone else. "Reset demo" restores the seed.
+A **seeded demo pot** (`/p/demo`) lets judges click through immediately. Seeded entries are labelled *sample*; anything you do in the demo runs for real against PayPal sandbox and the Otari AI gateway. "You are …" switches which member you act as, so you can approve as someone else. "Reset demo" restores the seed.
 
 ## Architecture
 
@@ -38,8 +40,8 @@ A **seeded demo pot** (`/p/demo`) lets judges click through immediately. Seeded 
 Browser (Next.js App Router, mobile-first)
  ├─ PayPal JS SDK buttons ──► /api/pots/:id/paypal/order    ─► PayPal Orders v2: create
  │                         └► /api/pots/:id/paypal/capture  ─► PayPal Orders v2: capture → contribution
- ├─ Agent tab ─────────────► /api/pots/:id/agent/request    ─► Gemini (structured JSON) ─┐
- │                         └► /api/pots/:id/agent/receipt   ─► Gemini vision (receipt)   │
+ ├─ Agent tab ─────────────► /api/pots/:id/agent/request    ─► Otari → Qwen3.5 (JSON)   ─┐
+ │                         └► /api/pots/:id/agent/receipt   ─► Otari → vision + code exec│
  │                         └► /api/pots/:id/agent/pay-receipt                            │
  │                                                       lib/policy.ts (deterministic) ◄─┘
  │                                                        ├ auto_pay  → PayPal Payouts v1
@@ -58,12 +60,13 @@ Key files:
 | `lib/policy.ts` | Spending-policy engine (pure, unit tested) |
 | `lib/ledger.ts` | Per-member ledger and refund caps (pure, unit tested) |
 | `lib/agent.ts` | Agent orchestration: interpret → policy → pay/hold/reject → audit |
-| `lib/gemini.ts` | Gemini REST client with JSON response schemas |
+| `lib/ai.ts` | Agent model layer: structured JSON calls through Otari with model fallback |
+| `lib/otari.ts` | Otari gateway client, `otari_web_search` payee check, `otari_code_execution` receipt audit |
 | `lib/paypal.ts` | PayPal REST: OAuth, Orders v2, Payouts v1, Captures refund; `PayPal-Request-Id` idempotency |
 | `components/PotApp.tsx` | Pot UI: Pot / Agent / Bills / Audit tabs |
 | `lib/seed.ts` | Seeded demo pot |
 
-**Safety design**: the model only *interprets*. It never sees or sets limits as something it can change, and its system prompt tells it to ignore instructions that try to. Amounts for receipt payments come from the server-stored parse, not from the browser. Contributions are recorded only after a server-side capture. Payouts use a deterministic `sender_batch_id` per bill, so a retry can't pay twice. If PayPal or Gemini credentials are missing, the UI says so and the API returns `503` with `paypal_not_configured` / `ai_not_configured`; nothing is ever marked paid without PayPal accepting it.
+**Safety design**: the model only *interprets*. It never sees or sets limits as something it can change, and its system prompt tells it to ignore instructions that try to. Amounts for receipt payments come from the server-stored parse, not from the browser. Contributions are recorded only after a server-side capture. Payouts use a deterministic `sender_batch_id` per bill, so a retry can't pay twice. If PayPal or Otari credentials are missing, the UI says so and the API returns `503` with `paypal_not_configured` / `ai_not_configured`; nothing is ever marked paid without PayPal accepting it.
 
 ## What changed vs SplitChai (pre-existing)
 
@@ -80,7 +83,7 @@ New for the hackathon (everything else):
 - Spending policy engine (caps, categories, N-of-M approvals) and its tests
 - Ledger with contributions, spend shares, refunds and balances, and its tests
 - PayPal integration: Checkout buttons, Orders v2 create/capture, Payouts, Captures refund
-- Gemini agent: receipt vision → itemized JSON, natural-language spend requests → structured intent
+- Otari agent (open-weight models): receipt vision → itemized JSON, natural-language spend requests → structured intent
 - Approval flow, audit log with model reasoning and policy checks
 - Landing page, create-pot flow, seeded demo pot, new mobile UI
 
@@ -106,8 +109,8 @@ Environment variables (see `.env.example`):
 | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` | yes | Sandbox REST app credentials |
 | `NEXT_PUBLIC_PAYPAL_CLIENT_ID` | yes | Same client id, for the JS SDK |
 | `PAYPAL_API_BASE` | no | Defaults to `https://api-m.sandbox.paypal.com` |
-| `GEMINI_API_KEY` | yes | Google AI Studio key |
-| `GEMINI_MODEL` | no | Defaults to `gemini-3.8-flash` |
+| `OTARI_API_KEY` | yes | otari.ai workspace API key (`otk_…`) |
+| `OTARI_MODEL` / `OTARI_FALLBACK_MODEL` / `OTARI_TOOL_MODEL` | no | Default `alibaba/qwen-3.5-35b-a3b` / `deepseek/deepseek-v4-flash-0731` / primary |
 | `KV_REST_API_URL`, `KV_REST_API_TOKEN` | no | Upstash Redis / Vercel KV. Empty = in-memory (resets on restart) |
 | `DEMO_PAYEE_EMAIL` | no | Payee for the demo pot; defaults to the sandbox personal account below |
 | `NEXT_PUBLIC_CHAIN_ID`, `NEXT_PUBLIC_SETTLEMENT_ADDRESS`, `RPC_URL` | no | Optional USDC-on-Base funding |

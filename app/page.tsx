@@ -62,7 +62,7 @@ export default function Landing() {
         </div>
         <div className="card">
           <h3>3. Ask the agent</h3>
-          <p className="muted">Snap a receipt or type &ldquo;pay the $24 dinner at Saravana to host@example.com&rdquo;. Gemini itemizes it and proposes a split.</p>
+          <p className="muted">Snap a receipt or type &ldquo;pay the $24 dinner at Saravana to host@example.com&rdquo;. An open-weight model (Qwen3.5 via the Otari AI gateway by Mozilla.ai) itemizes it, re-checks the math in Otari&rsquo;s code sandbox, and proposes a split.</p>
         </div>
         <div className="card">
           <h3>4. Policy decides, PayPal pays</h3>
