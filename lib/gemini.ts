@@ -72,6 +72,7 @@ export async function generateJson<T>(parts: Part[], schema: object, system: str
       if (models.length === 1) await sleep(Math.min(1500 * 2 ** attempt, Math.max(0, deadline - Date.now() - 4_000)));
     }
   }
+  console.error("[gemini] giving up:", last.slice(0, 500));
   throw new GeminiBusy(/timed out|aborted|timeout/i.test(last) ? "no answer in time" : last.replace(/^Gemini error /, "Gemini ").split(":")[0]);
 }
 
