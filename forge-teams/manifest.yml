@@ -1,0 +1,178 @@
+modules:
+  jira:issuePanel:
+    - key: chai-pot-issue-panel
+      resource: panel
+      resolver:
+        function: resolver
+      render: native
+      title: Chai Pot
+      icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
+  jira:globalPage:
+    - key: chai-pot-global-page
+      resource: page
+      resolver:
+        function: resolver
+      render: native
+      title: Chai Pot for Teams
+  macro:
+    - key: chai-pot-balance-macro
+      resource: macro
+      resolver:
+        function: resolver
+      render: native
+      title: Chai Pot balance
+      description: Live team budget pots, spend and approvals from Chai Pot for Teams.
+  rovo:agent:
+    - key: chai-pot-treasurer
+      name: Chai Pot Treasurer
+      description: Checks team spends against your budget policy, reviews expense work items, flags risky spends and reports what is left in each team pot.
+      prompt: resource:agent-resource;prompt.txt
+      conversationStarters:
+        - How much is left in our team pots?
+        - Can I expense a ₹3,000 team lunch at Big Chill Cafe?
+        - What is waiting for approval?
+        - Review this expense request
+      actions:
+        - get-pot-summary
+        - check-spend
+        - read-expense-item
+        - log-expense
+        - list-pending-approvals
+  action:
+    - key: get-pot-summary
+      name: Get team pot summary
+      function: actionPotSummary
+      actionVerb: GET
+      description: Returns budget, spent, pending and remaining amounts for the team's Chai Pot budget pots, spend by category, and items waiting for approval.
+      inputs:
+        potName:
+          title: Pot name
+          type: string
+          required: false
+          description: Optional name of one pot, e.g. "offsite" or "Tools & Subscriptions". Leave empty for all pots.
+    - key: check-spend
+      name: Check a spend against policy
+      function: actionCheckSpend
+      actionVerb: GET
+      description: Dry-runs the deterministic spend policy for a proposed expense (amount, category, vendor) without recording it. Returns the decision (auto-approved, needs approval, rejected), reasons, risk flags and risk score.
+      inputs:
+        amount:
+          title: Amount
+          type: number
+          required: true
+          description: The amount in major units, e.g. 3000 for ₹3,000.
+        currency:
+          title: Currency
+          type: string
+          required: false
+          description: ISO currency code like INR or USD. Defaults to the pot's currency.
+        category:
+          title: Category
+          type: string
+          required: false
+          description: One of meals, travel, software, events, equipment, gifts, training, other.
+        vendor:
+          title: Vendor
+          type: string
+          required: false
+          description: Who will be paid, e.g. "Big Chill Cafe".
+        description:
+          title: Description
+          type: string
+          required: false
+          description: The request in the user's own words.
+        potName:
+          title: Pot name
+          type: string
+          required: false
+          description: Which pot to check against. Defaults to the first pot.
+    - key: read-expense-item
+      name: Read expense work item
+      function: actionReadIssue
+      actionVerb: GET
+      description: Reads the summary, description, reporter and labels of a Jira work item that contains an expense request.
+      inputs:
+        issueKey:
+          title: Work item key
+          type: string
+          required: false
+          description: The Jira work item key, e.g. TEAM-12. Uses the current work item if omitted.
+    - key: log-expense
+      name: Review and log an expense work item
+      function: actionLogExpense
+      actionVerb: CREATE
+      description: Parses the expense request in a Jira work item, runs the team spend policy, records it in the pot ledger, and posts the decision as a comment with a label. Use when asked to review, log or process an expense work item.
+      inputs:
+        issueKey:
+          title: Work item key
+          type: string
+          required: false
+          description: The Jira work item key, e.g. TEAM-12. Uses the current work item if omitted.
+        potName:
+          title: Pot name
+          type: string
+          required: false
+          description: Which pot to charge. Defaults to the pot from a pot-<name> label, else the first pot.
+    - key: list-pending-approvals
+      name: List spends waiting for approval
+      function: actionPending
+      actionVerb: GET
+      description: Lists expense requests that the policy held for human approval, with amount, requester, reasons and risk flags.
+      inputs:
+        potName:
+          title: Pot name
+          type: string
+          required: false
+          description: Optional pot name to filter by.
+  rovo:mcp:
+    - key: chai-pot-mcp
+      name: Chai Pot for Teams
+      description: Team budget pot tools - pot summary, policy pre-check and approval queue.
+      tools:
+        - get-pot-summary
+        - check-spend
+        - list-pending-approvals
+  trigger:
+    - key: chai-pot-expense-created
+      function: onIssueCreated
+      events:
+        - avi:jira:created:issue
+  function:
+    - key: resolver
+      handler: index.handler
+    - key: actionPotSummary
+      handler: index.actionPotSummary
+    - key: actionCheckSpend
+      handler: index.actionCheckSpend
+    - key: actionReadIssue
+      handler: index.actionReadIssue
+    - key: actionLogExpense
+      handler: index.actionLogExpense
+    - key: actionPending
+      handler: index.actionPending
+    - key: onIssueCreated
+      handler: index.onIssueCreated
+resources:
+  - key: panel
+    path: src/frontend/panel.jsx
+  - key: page
+    path: src/frontend/page.jsx
+  - key: macro
+    path: src/frontend/macro.jsx
+  - key: agent-resource
+    path: resources/agent
+permissions:
+  scopes:
+    - storage:app
+    - read:jira-work
+    - write:jira-work
+    - read:jira-user
+app:
+  id: ari:cloud:ecosystem::app/00000000-0000-0000-0000-000000000000
+  runtime:
+    name: nodejs22.x
+  compatibility:
+    jira:
+      required: true
+    confluence:
+      required: false
