@@ -1,0 +1,121 @@
+[
+ {
+  "name": "read_file",
+  "description": "Read the contents of a file in the active project. Returns the file as plain text. Path must be inside the project root. Files in node_modules / .git / .env / .ssh are blocked. Max 1MB per read.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string",
+     "description": "Path to the file. Can be relative to the project root (e.g. \"src/auth.js\") or absolute (must still be inside the project root)."
+    }
+   },
+   "required": [
+    "path"
+   ]
+  }
+ },
+ {
+  "name": "list_files",
+  "description": "List files and subdirectories in a directory of the active project. Returns up to 200 entries. Use this to discover what files exist before reading them.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string",
+     "description": "Directory path, relative to the project root or absolute (must be inside the project root). Use \".\" or \"\" for the project root itself."
+    }
+   },
+   "required": [
+    "path"
+   ]
+  }
+ },
+ {
+  "name": "grep_code",
+  "description": "Search the active project for a text pattern. Returns up to 50 matching lines with file:line prefixes. Use this to find references to a symbol, function, or string across the codebase. Skips node_modules and .git automatically.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "Text to search for (plain text, not regex by default)."
+    },
+    "fileGlob": {
+     "type": "string",
+     "description": "Optional file pattern to restrict the search (e.g. \"*.js\", \"**/*.tsx\"). Omit to search all files."
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ {
+  "name": "edit_file",
+  "description": "Edit an existing file by exact-match string replacement. Reject if old_string is not unique unless replace_all=true. Reject if path is outside the project root or hits the blocklist. The user must Approve the diff in a modal before this runs.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string",
+     "description": "Path to the file, relative to project root (e.g. \"src/auth.js\") or absolute (must stay inside the project root)."
+    },
+    "old_string": {
+     "type": "string",
+     "description": "Exact text to find (whitespace + casing included)."
+    },
+    "new_string": {
+     "type": "string",
+     "description": "Replacement text."
+    },
+    "replace_all": {
+     "type": "boolean",
+     "description": "When true, replace every occurrence; when false/omitted, old_string MUST be unique in the file."
+    }
+   },
+   "required": [
+    "path",
+    "old_string",
+    "new_string"
+   ]
+  }
+ },
+ {
+  "name": "create_file",
+  "description": "Create a new file in the active project. Errors if the file already exists (use edit_file instead). Max 1MB of content. The user must Approve the preview in a modal before this runs.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string",
+     "description": "Path for the new file, relative to project root."
+    },
+    "content": {
+     "type": "string",
+     "description": "Full contents of the new file."
+    }
+   },
+   "required": [
+    "path",
+    "content"
+   ]
+  }
+ },
+ {
+  "name": "delete_file",
+  "description": "Delete a file from the active project. Errors on directories, missing files, and blocklisted paths. The user must Approve in a modal showing the current contents before this runs.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string",
+     "description": "Path to the file to delete, relative to project root."
+    }
+   },
+   "required": [
+    "path"
+   ]
+  }
+ }
+]
