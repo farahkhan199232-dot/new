@@ -8,12 +8,17 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --no-warnings --test lib/*.test.ts"
+    "test": "node --experimental-strip-types --no-warnings --test lib/*.test.ts lib/near/*.test.ts"
   },
   "dependencies": {
     "@base-org/account": "^2.4.0",
+    "@near-wallet-selector/core": "^10.1.4",
+    "@near-wallet-selector/meteor-wallet": "^10.1.4",
+    "@near-wallet-selector/modal-ui": "^10.1.4",
+    "@near-wallet-selector/my-near-wallet": "^10.1.4",
     "@tanstack/react-query": "^5.90.0",
     "@upstash/redis": "^1.35.0",
+    "near-api-js": "^7.4.0",
     "next": "^16.0.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

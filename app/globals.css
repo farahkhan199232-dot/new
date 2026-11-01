@@ -106,3 +106,21 @@ footer { margin-top: 32px; font-size: 12px; color: var(--muted); }
   .landing h1 { font-size: 30px; }
   .tabs button { font-size: 12px; padding: 8px 2px; }
 }
+
+/* ---- Chai Pot on NEAR ---- */
+.near-tag { font-size: 11px; font-weight: 800; background: #111; color: #fff; padding: 2px 7px; border-radius: 99px; letter-spacing: .02em; }
+.pill { font-size: 12px; color: #fff; border: 1px solid rgba(255,255,255,.5); border-radius: 99px; padding: 3px 10px; text-decoration: none; white-space: nowrap; }
+.limits { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.limits span { font-size: 12px; background: rgba(255,255,255,.16); border-radius: 99px; padding: 3px 9px; }
+.seg { display: flex; gap: 6px; }
+.seg button { flex: 1; border: 1px solid var(--line); background: #fff; border-radius: 10px; padding: 8px 4px; font: inherit; font-weight: 700; color: var(--muted); cursor: pointer; }
+.seg button.on { background: var(--chai); border-color: var(--chai); color: #fff; }
+.member { padding: 6px 0; border-top: 1px solid var(--line); }
+.member:first-of-type { border-top: 0; }
+.agent-line { background: #fbf3e8; border-left: 3px solid var(--masala); padding: 6px 9px; border-radius: 6px; margin-top: 6px; }
+.verdict.ok { border-color: #86efac; }
+.verdict.no { border-color: #fda29b; }
+.linkish { background: none; border: 0; padding: 0; color: var(--chai-2); text-decoration: underline; font: inherit; cursor: pointer; }
+.raw { margin-top: 6px; }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 14px; z-index: 50; max-width: 90vw; }
+code { font-size: 12px; background: #f1e3d1; padding: 1px 5px; border-radius: 5px; }

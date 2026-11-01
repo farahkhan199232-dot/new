@@ -38,7 +38,7 @@ const transient = (m: string) => /Gemini error (429|500|502|503|504)|timed out|a
  * Calls Gemini with a hard deadline so the serverless function never hits its own timeout,
  * retrying transient overload errors (503 "high demand", 429) with a short backoff.
  */
-async function generateJson<T>(parts: Part[], schema: object, system: string, tuning: Tuning = {}, budgetMs = 75_000): Promise<T & { _model: string }> {
+export async function generateJson<T>(parts: Part[], schema: object, system: string, tuning: Tuning = {}, budgetMs = 75_000): Promise<T & { _model: string }> {
   if (!KEY) throw new GeminiNotConfigured();
   const deadline = Date.now() + budgetMs;
   const models = [GEMINI_MODEL, ...FALLBACK_MODELS];
