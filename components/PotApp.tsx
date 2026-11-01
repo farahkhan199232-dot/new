@@ -772,6 +772,7 @@ const decisionBadge: Record<string, [string, string]> = {
 function AuditCard({ pot, e }: { pot: Pot; e: AuditEntry }) {
   const d = e.decision ? decisionBadge[e.decision] : null;
   const data = e.data as Record<string, unknown> | undefined;
+  const route = (data?.interpretation as { _route?: { requested?: string; fallback?: boolean } } | undefined)?._route;
   return (
     <div className="card">
       <div className="row">
@@ -796,7 +797,13 @@ function AuditCard({ pot, e }: { pot: Pot; e: AuditEntry }) {
       )}
       {data && (data.interpretation || data.receipt) ? (
         <details style={{ marginTop: 6 }}>
-          <summary>Model output ({String(data.model ?? "")})</summary>
+          <summary>
+            Model output ({String(data.model ?? "")}
+            {route?.requested && route.requested !== data.model
+              ? ` · Otari routing policy "${route.requested}"${route.fallback ? ", gateway fell back" : ""}`
+              : ""}
+            )
+          </summary>
           <pre>{JSON.stringify(data.interpretation ?? data.receipt, null, 2)}</pre>
         </details>
       ) : null}

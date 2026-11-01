@@ -8,9 +8,18 @@
  * tag with `metadata` so the Usage tab splits spend by feature and pot.
  *
  * Model roles (all open-weight, overridable by env):
- *  - OTARI_MODEL          reads plain-language spend requests and receipt photos (Qwen3.5 35B A3B)
- *  - OTARI_FALLBACK_MODEL tried when the primary is slow or fails (DeepSeek V4 Flash)
- *  - OTARI_TOOL_MODEL     drives the web-search payee check and code-execution receipt audit
+ *  - OTARI_MODEL          "chai-pot-agent", an Otari routing policy: Qwen3.5 35B A3B, failing over to
+ *                         DeepSeek V4 Flash at the gateway, and tiering down to gpt-oss-20b when the
+ *                         member's budget is 80% used. Reads plain-language spend requests.
+ *  - OTARI_VISION_MODEL   reads receipt photos (Qwen3.5 35B A3B, multimodal)
+ *  - OTARI_SEARCH_MODEL   researches held payees with otari_web_search (DeepSeek V4 Flash)
+ *  - OTARI_TOOL_MODEL     re-adds receipts with otari_code_execution (Qwen3.5 35B A3B)
+ *  - OTARI_FALLBACK_MODEL client-side second try when a call times out (DeepSeek V4 Flash)
+ *
+ * Per-user budgets: OTARI_API_KEY is an Otari *service key*. Every request names the pot member
+ * behind it in `user` ("chai-pot:<pot>:<member>"), so Otari bills that member as an end user on
+ * the chai-pot-member-daily budget ($0.25/day each), under the key's own chai-pot-app-daily
+ * ceiling ($3/day). A member who uses up their allowance gets a 403 budget_exceeded, shown in the UI.
  */
 const KEY = process.env.OTARI_API_KEY;
 /**
@@ -21,18 +30,36 @@ export const OTARI_BASE = (process.env.OTARI_API_BASE || "https://api.otari.ai")
   .replace(/\/+$/, "")
   .replace(/\/api\/v1$|\/v1$/, "");
 
-export const OTARI_MODEL = process.env.OTARI_MODEL || "alibaba/qwen-3.5-35b-a3b";
-export const OTARI_VISION_MODEL = process.env.OTARI_VISION_MODEL || OTARI_MODEL;
-export const OTARI_FALLBACK_MODEL = process.env.OTARI_FALLBACK_MODEL || "deepseek/deepseek-v4-flash-0731";
-export const OTARI_TOOL_MODEL = process.env.OTARI_TOOL_MODEL || OTARI_MODEL;
+const QWEN = "alibaba/qwen-3.5-35b-a3b";
+const DEEPSEEK = "deepseek/deepseek-v4-flash-0731";
+export const OTARI_MODEL = process.env.OTARI_MODEL || "chai-pot-agent";
+export const OTARI_VISION_MODEL = process.env.OTARI_VISION_MODEL || QWEN;
+export const OTARI_FALLBACK_MODEL = process.env.OTARI_FALLBACK_MODEL || DEEPSEEK;
+export const OTARI_SEARCH_MODEL = process.env.OTARI_SEARCH_MODEL || DEEPSEEK;
+export const OTARI_TOOL_MODEL = process.env.OTARI_TOOL_MODEL || QWEN;
 
 export const otariConfigured = () => !!KEY;
 
 export class OtariError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  code?: string;
+  constructor(status: number, message: string, code?: string) {
     super(`Otari error ${status}: ${message}`);
     this.status = status;
+    this.code = code;
+  }
+}
+
+/** A member's per-user Otari budget (or the app's ceiling) refused the call. */
+export class OtariBudgetExceeded extends OtariError {
+  scope: string;
+  constructor(scope: string, detail: string) {
+    super(403, detail, "budget_exceeded");
+    this.scope = scope;
+    this.message =
+      scope === "user"
+        ? "This member has used today's AI allowance (Otari per-user budget, $0.25/day). Nothing was paid; it resets at 00:00 UTC."
+        : `The app's daily AI spend limit on Otari (${scope} budget) is reached. Nothing was paid; it resets at 00:00 UTC.`;
   }
 }
 
@@ -85,6 +112,8 @@ export interface OtariReply {
   text: string;
   json?: unknown;
   model: string;
+  /** Otari's routing outcome: the policy asked for, whether the gateway fell back, how many attempts. */
+  route?: { requested: string; fallback: boolean; attempts: number; endUserBudget?: string };
   requestId?: string;
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; cost?: number };
 }
@@ -103,6 +132,8 @@ export async function otariChat(o: {
   maxTokens?: number;
   tags?: Tags;
   session?: string;
+  /** End user (pot member) billed for this call on the service key's per-user budget. */
+  user?: string;
 }): Promise<OtariReply> {
   if (!KEY) throw new OtariError(401, "OTARI_API_KEY not set");
   const body: Record<string, unknown> = {
@@ -117,6 +148,7 @@ export async function otariChat(o: {
     metadata: { app: "chai-pot", ...(o.tags ?? {}) },
   };
   if (o.session) body.session_label = o.session.slice(0, 255);
+  if (o.user) body.user = o.user.slice(0, 256);
   if (o.tools?.length) {
     body.tools = o.tools.map((type) => ({ type }));
     body.max_tool_iterations = o.maxToolIterations ?? 3;
@@ -139,12 +171,25 @@ export async function otariChat(o: {
     /* non-JSON error page */
   }
   if (!r.ok) {
-    const code = r.headers.get("otari-error-code");
+    const code = r.headers.get("otari-error-code") ?? (typeof d.code === "string" ? d.code : null);
+    if (code === "budget_exceeded")
+      throw new OtariBudgetExceeded(r.headers.get("otari-budget-scope") ?? "user", String(d.detail ?? raw).slice(0, 300));
     const msg = d.error?.message ?? (typeof d.detail === "string" ? d.detail : d.detail ? JSON.stringify(d.detail) : raw || "request failed");
     throw new OtariError(r.status, `${code ? `[${code}] ` : ""}${String(msg).slice(0, 400)}`);
   }
   const text: string = d.choices?.[0]?.message?.content ?? "";
-  const out: OtariReply = { text, model: d.model || o.model, requestId: r.headers.get("x-request-id") ?? d.id, usage: d.usage };
+  const out: OtariReply = {
+    text,
+    model: r.headers.get("otari-model") || d.model || o.model,
+    route: {
+      requested: o.model,
+      fallback: r.headers.get("otari-fallback") === "true",
+      attempts: Number(r.headers.get("otari-attempt-count") || 1),
+      endUserBudget: r.headers.get("otari-end-user-budget") ?? undefined,
+    },
+    requestId: r.headers.get("otari-request-id") ?? r.headers.get("x-request-id") ?? d.id,
+    usage: d.usage,
+  };
   if (!text) throw new OtariError(502, `no content (${d.choices?.[0]?.finish_reason ?? "unknown"})`);
   if (!o.schema) return out;
   try {
@@ -179,10 +224,10 @@ const payeeSchema = {
  * with Otari's gateway-run web search and writes a short advisory note for approvers.
  * It never approves, rejects or pays. Returns null on any failure so the core flow never waits on it.
  */
-export async function checkPayeeOnWeb(context: string, tags: Tags, session: string, timeoutMs = 40_000): Promise<(PayeeCheck & { _model: string }) | null> {
+export async function checkPayeeOnWeb(context: string, tags: Tags, session: string, user?: string, timeoutMs = 40_000): Promise<(PayeeCheck & { _model: string }) | null> {
   if (!KEY) return null;
   const deadline = Date.now() + timeoutMs;
-  for (const model of [OTARI_TOOL_MODEL, OTARI_FALLBACK_MODEL].filter((m, i, a) => a.indexOf(m) === i)) {
+  for (const model of [OTARI_SEARCH_MODEL, OTARI_TOOL_MODEL].filter((m, i, a) => a.indexOf(m) === i)) {
     const left = deadline - Date.now();
     if (left < 5_000) break;
     try {
@@ -195,6 +240,7 @@ export async function checkPayeeOnWeb(context: string, tags: Tags, session: stri
         maxTokens: 2048,
         tags: { ...tags, feature: "payee-web-check" },
         session,
+        user,
         system: [
           "You help members of a shared group wallet decide on a payment the wallet's policy engine held for approval.",
           "Use web search once or twice to check the payee or merchant: does it exist, where is it, is the amount plausible for what it sells.",
@@ -206,8 +252,9 @@ export async function checkPayeeOnWeb(context: string, tags: Tags, session: stri
       });
       const r = out.json as PayeeCheck;
       if (r && typeof r.summary === "string") return { ...r, sources: (r.sources ?? []).filter((u) => /^https?:\/\//.test(u)).slice(0, 4), _model: out.model };
-    } catch {
-      /* try the fallback, then give up quietly */
+    } catch (e) {
+      if (e instanceof OtariBudgetExceeded) return null;
+      /* try the other model, then give up quietly */
     }
   }
   return null;
@@ -246,6 +293,7 @@ export async function auditReceiptWithCode(
   receiptJson: string,
   tags: Tags,
   session: string,
+  user?: string,
   timeoutMs = 45_000,
 ): Promise<(ReceiptAudit & { _model: string }) | { error: string } | null> {
   if (!KEY) return null;
@@ -264,6 +312,7 @@ export async function auditReceiptWithCode(
         maxTokens: 1500,
         tags: { ...tags, feature: "receipt-code-audit" },
         session,
+        user,
         system: [
           "You audit a receipt that was already extracted to JSON. Run Python with the code execution tool to add the line totals,",
           "then add tax, service_charge and tip (null = 0), and compare with the printed total (tolerance 1.0).",

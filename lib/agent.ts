@@ -112,8 +112,15 @@ async function decideAndAct(pot: Pot, p: Proposal): Promise<Spend> {
   return spend;
 }
 
-/** Otari cost tags + trace session for every model call made for this pot. */
-const otariCtx = (pot: Pot, feature: string) => ({ tags: { pot: pot.isDemo ? "demo" : "user", feature }, session: `chai-pot:${pot.id}` });
+/**
+ * Otari cost tags + trace session for every model call made for this pot, and the end user it is
+ * billed to: the pot member who asked, on the service key's per-user daily budget.
+ */
+const otariCtx = (pot: Pot, feature: string, actor?: string) => ({
+  tags: { pot: pot.isDemo ? "demo" : "user", feature },
+  session: `chai-pot:${pot.id}`,
+  user: `chai-pot:${pot.id}:${actor || "agent"}`,
+});
 
 /**
  * A bill the policy held gets a web-search payee check through Otari's gateway-run
@@ -132,8 +139,8 @@ async function addPayeeCheck(pot: Pot, spend: Spend, reasons: string[]) {
     `Why the policy held it: ${reasons.join("; ")}`,
     `Recent bills:\n${history || "(none)"}`,
   ].filter(Boolean).join("\n");
-  const c = otariCtx(pot, "payee-web-check");
-  const r = await checkPayeeOnWeb(context, c.tags, c.session);
+  const c = otariCtx(pot, "payee-web-check", spend.requestedBy);
+  const r = await checkPayeeOnWeb(context, c.tags, c.session, c.user);
   if (!r) return;
   spend.review = { risk: r.risk, summary: r.summary, questions: (r.questions_for_approvers ?? []).slice(0, 3), sources: r.sources, model: r._model };
   audit(pot, {
@@ -196,7 +203,7 @@ export async function handleTextRequest(pot: Pot, actor: string, text: string) {
       requester,
       allowed: pot.policy.allowedCategories,
     },
-    otariCtx(pot, "spend-request"),
+    otariCtx(pot, "spend-request", actor),
   );
   // Only the two facts the policy engine can't default are blocking; models sometimes list extras.
   const missing = (it.missing_info ?? []).filter((m) => /amount|payee/i.test(m) && !/payer/i.test(m));
@@ -230,12 +237,12 @@ export async function handleTextRequest(pot: Pot, actor: string, text: string) {
 
 /** Receipt photo -> itemized JSON + suggested equal split. Stored in the audit log for the pay step. */
 export async function handleReceipt(pot: Pot, actor: string, imageBase64: string, mimeType: string) {
-  const r = await parseReceipt(imageBase64, mimeType, otariCtx(pot, "receipt-read"));
+  const r = await parseReceipt(imageBase64, mimeType, otariCtx(pot, "receipt-read", actor));
   if (!(r.total > 0)) throw new Error(`Could not read a total from this receipt${r.notes ? `: ${r.notes}` : ""}`);
   // Re-add the receipt in Otari's code-execution sandbox rather than trusting model arithmetic.
-  const ac = otariCtx(pot, "receipt-code-audit");
-  const { _model: _m, ...forAudit } = r;
-  const audited = await auditReceiptWithCode(JSON.stringify(forAudit), ac.tags, ac.session);
+  const ac = otariCtx(pot, "receipt-code-audit", actor);
+  const { _model: _m, _route: _r, ...forAudit } = r;
+  const audited = await auditReceiptWithCode(JSON.stringify(forAudit), ac.tags, ac.session, ac.user);
   const math = audited && "matches" in audited ? audited : null;
   const mathError = audited && "error" in audited ? audited.error : undefined;
   const conv = toPotCurrency(pot, r.total, r.currency);

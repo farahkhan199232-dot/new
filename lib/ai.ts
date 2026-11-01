@@ -1,6 +1,6 @@
 import { CATEGORIES } from "./types";
 
-import { OTARI_FALLBACK_MODEL, OTARI_MODEL, OTARI_VISION_MODEL, OtariError, otariChat, otariConfigured, type Content } from "./otari";
+import { OTARI_FALLBACK_MODEL, OTARI_MODEL, OTARI_VISION_MODEL, OtariError, otariChat, otariConfigured, type Content, type OtariReply } from "./otari";
 
 /**
  * The agent's model layer. Every call goes through the Otari hosted AI gateway (lib/otari.ts)
@@ -32,7 +32,7 @@ export type Tags = Record<string, string>;
  * One structured call through Otari with a hard deadline so the serverless function never hits its
  * own timeout. Tries the primary open-weight model, then the fallback, on slow or failed answers.
  */
-async function generateJson<T>(parts: Part[], schema: object, system: string, opts: { tags?: Tags; session?: string; budgetMs?: number } = {}): Promise<T & { _model: string }> {
+async function generateJson<T>(parts: Part[], schema: object, system: string, opts: { tags?: Tags; session?: string; user?: string; budgetMs?: number } = {}): Promise<T & { _model: string; _route?: OtariReply["route"] }> {
   if (!otariConfigured()) throw new AINotConfigured();
   const budgetMs = opts.budgetMs ?? 75_000;
   const hasImage = parts.some((p) => "inline_data" in p);
@@ -59,8 +59,9 @@ async function generateJson<T>(parts: Part[], schema: object, system: string, op
         maxTokens: 4096,
         tags: opts.tags,
         session: opts.session,
+        user: opts.user,
       });
-      return Object.assign(out.json as object, { _model: out.model || model }) as T & { _model: string };
+      return Object.assign(out.json as object, { _model: out.model || model, _route: out.route }) as T & { _model: string; _route?: OtariReply["route"] };
     } catch (e) {
       last = (e as Error).message;
       if (e instanceof OtariError && (e.status === 401 || e.status === 402 || e.status === 403)) throw e;
@@ -114,7 +115,7 @@ const receiptSchema = {
   required: ["merchant", "currency", "items", "total", "category", "notes"],
 };
 
-export function parseReceipt(imageBase64: string, mimeType: string, ctx: { tags?: Tags; session?: string } = {}) {
+export function parseReceipt(imageBase64: string, mimeType: string, ctx: { tags?: Tags; session?: string; user?: string } = {}) {
   return generateJson<ReceiptParse>(
     [
       { text: "Extract this receipt. Use numbers exactly as printed. If a value is unreadable, use null and say so in notes." },
@@ -162,7 +163,7 @@ const requestSchema = {
   required: ["is_payment_request", "amount", "currency", "payee_email", "category", "description", "split_among", "reasoning", "missing_info"],
 };
 
-export function interpretRequest(o: { text: string; potCurrency: string; members: string[]; requester: string; allowed: string[] }, ctx: { tags?: Tags; session?: string } = {}) {
+export function interpretRequest(o: { text: string; potCurrency: string; members: string[]; requester: string; allowed: string[] }, ctx: { tags?: Tags; session?: string; user?: string } = {}) {
   return generateJson<SpendInterpretation>(
     [
       {

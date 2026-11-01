@@ -1,6 +1,20 @@
 # Chai Pot ☕
 
-> **Otari branch (`otari-wilding`)** for Mozilla.ai's *Developers Wilding: Online* hackathon. Every model call now goes through the [Otari](https://otari.ai) hosted AI gateway to open-weight models (Qwen3.5 35B A3B, falling back to DeepSeek V4 Flash), instead of calling Gemini directly. Otari features used: OpenAI-compatible gateway with one workspace key, open-weight model catalog + fallback routing, gateway-run `otari_web_search` (payee check on held bills), gateway-run `otari_code_execution` (receipt math audit), per-request `metadata` cost tags and `session_label` traces (Usage tab by feature and pot). Live: https://chai-pot-otari.vercel.app/p/demo
+> **Otari branch (`otari-wilding`)** for Mozilla.ai's *Developers Wilding: Online* hackathon. Every model call goes through the [Otari](https://otari.ai) hosted AI gateway to open-weight models, instead of calling Gemini directly. Live: https://chai-pot-otari.vercel.app/p/demo
+>
+> **What Otari does in Chai Pot**
+>
+> | Otari feature | Where it is used |
+> |---|---|
+> | Open-weight models, each with its own job | Qwen3.5 35B A3B reads spend requests and receipt photos and re-adds receipts; DeepSeek V4 Flash researches payees with web search; gpt-oss-20b is the budget tier-down model |
+> | Model routing and fallbacks | Spend requests are sent to `model: "chai-pot-agent"`, an Otari routing policy: Qwen3.5 → fails over to DeepSeek V4 Flash at the gateway → tiers down to gpt-oss-20b when the member's budget is 80% used. A client-side second try covers timeouts. The audit log shows the policy and whether the gateway fell back (`Otari-Fallback` header) |
+> | Web search (gateway-run `otari_web_search`) | When the policy engine holds a bill for approval, the agent checks the merchant on the web and gives approvers a risk note with real sources (advisory only) |
+> | Code execution (gateway-run `otari_code_execution`) | Every receipt is re-added in Otari's Python sandbox (items + tax + service + tip vs printed total) instead of trusting model arithmetic |
+> | Per-user budgets | `OTARI_API_KEY` is an Otari **service key**. Each call names the pot member behind it in `user` (`chai-pot:<pot>:<member>`), so Otari bills that member as an end user on the `chai-pot-member-daily` budget ($0.25/day each). A member over their allowance gets a clear "AI allowance used up, nothing was paid" message (HTTP 429, `ai_budget_exceeded`) |
+> | Budgets and spending limits | The service key is capped by the `chai-pot-app-daily` budget ($3/day for the whole app), which pools every member |
+> | Cost tags and traces | Every request carries `metadata` tags (`feature=spend-request / receipt-read / payee-web-check / receipt-code-audit`, `pot=demo/user`) and a `session_label` per pot, so the Otari dashboard shows each pot as one session with its tool spans and cost |
+>
+> The model only interprets. Group money rules (per-bill cap, daily cap, categories, approvals) are enforced by a deterministic policy engine the model cannot change; Otari's budgets cap what the *AI* may spend per member.
 
 **A shared group wallet where an AI agent pays the group's bills, within limits the members set.**
 
@@ -109,8 +123,9 @@ Environment variables (see `.env.example`):
 | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` | yes | Sandbox REST app credentials |
 | `NEXT_PUBLIC_PAYPAL_CLIENT_ID` | yes | Same client id, for the JS SDK |
 | `PAYPAL_API_BASE` | no | Defaults to `https://api-m.sandbox.paypal.com` |
-| `OTARI_API_KEY` | yes | otari.ai workspace API key (`otk_…`) |
-| `OTARI_MODEL` / `OTARI_FALLBACK_MODEL` / `OTARI_TOOL_MODEL` | no | Default `alibaba/qwen-3.5-35b-a3b` / `deepseek/deepseek-v4-flash-0731` / primary |
+| `OTARI_API_KEY` | yes | otari.ai API key (`otk_…`). Use a **service key** with a default end-user budget to get per-member AI budgets |
+| `OTARI_MODEL` | no | Default `chai-pot-agent` (an Otari routing policy you create in Routing: Qwen3.5 35B A3B, fallback DeepSeek V4 Flash, budget tier-down gpt-oss-20b). Set `alibaba/qwen-3.5-35b-a3b` if you have no policy |
+| `OTARI_VISION_MODEL` / `OTARI_SEARCH_MODEL` / `OTARI_TOOL_MODEL` / `OTARI_FALLBACK_MODEL` | no | Default `alibaba/qwen-3.5-35b-a3b` / `deepseek/deepseek-v4-flash-0731` / `alibaba/qwen-3.5-35b-a3b` / `deepseek/deepseek-v4-flash-0731` |
 | `KV_REST_API_URL`, `KV_REST_API_TOKEN` | no | Upstash Redis / Vercel KV. Empty = in-memory (resets on restart) |
 | `DEMO_PAYEE_EMAIL` | no | Payee for the demo pot; defaults to the sandbox personal account below |
 | `NEXT_PUBLIC_CHAIN_ID`, `NEXT_PUBLIC_SETTLEMENT_ADDRESS`, `RPC_URL` | no | Optional USDC-on-Base funding |
