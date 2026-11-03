@@ -24,3 +24,10 @@ jobs:
       - run: fe fmt --check
       - run: fe test
       - run: fe build
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+      - name: Parity suite (original Foundry tests against Solidity and Fe) and gas report
+        working-directory: parity
+        run: |
+          forge install foundry-rs/forge-std --no-git
+          forge test -vv
