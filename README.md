@@ -23,7 +23,7 @@ During the contest I built:
 
 1. **`src/lib.fe`**: a full Fe port of `SplitChaiSettlement`: `settle`, `settleBatch`, `quoteFee`, the views, a 1% fee cap, pause, and two-step ownership. Selectors, events and custom errors are byte-for-byte the Solidity ABI, so the existing frontend, indexer (`Settled` logs) and tests work against it unchanged.
 2. **`src/money.fe`**: typed money. `Usdc` (an amount) and `Bps` (a fee rate) are distinct types. The only way to turn a rate into money is `Bps::of(Usdc) -> Usdc`, which rounds down exactly like the Solidity `quoteFee`.
-3. **`src/tests.fe`**: 29 native `fe test` tests, including Fe test doubles (a mock USDC, a token that returns `false`, a token that re-enters, a second actor contract), a check that the reentrancy test fails when the lock is removed, and checks that go beyond the original suite: reentrancy, no-code token, unpause, lock release, zero treasury.
+3. **`src/tests.fe`**: 29 native `fe test` tests, including Fe test doubles (a mock USDC, a token that returns `false`, a token that re-enters, a second actor contract) and checks that go beyond the original suite: reentrancy, no-code token, unpause, lock release, zero treasury. I mutation-checked the reentrancy test by hand: with the lock check removed, it fails.
 4. **`parity/`**: a differential harness. The original 18-test Foundry suite runs once against the Solidity contract and once against the Fe bytecode from `fe build`. Both pass all 18, including the 1,000-run fuzz test.
 5. **`parity/test/GasBench.t.sol`**: a gas comparison under equal, cold-access conditions.
 6. **A live deployment on Base Sepolia** and real `settle`/`settleBatch` transactions (see Demo).
