@@ -1,0 +1,668 @@
+// Native Fe tests for the SplitChai settlement. Run with `fe test`.
+//
+// The test contract itself plays "alice", the payer. Other parties are plain
+// addresses, or small actor contracts where they must send a transaction
+// (the pending owner, a malicious token).
+//
+// The original 18-test Foundry suite also runs against the Fe bytecode, see
+// parity/ and the README.
+
+use core::ptr::{MemBuffer, MemVec}
+use std::abi::{Bytes32, DynArray, dyn_array_from}
+use std::evm::StorageMap
+use ingot::{AdminMsg, Bps, MAX_FEE, Payment, SettlementMsg, SplitChaiSettlement, Usdc, ViewMsg}
+
+// ---------------------------------------------------------------------------
+// Test doubles
+// ---------------------------------------------------------------------------
+
+msg TokenMsg {
+    #[selector = sol("mint(address,uint256)")]
+    Mint { to: Address, amount: u256 },
+    #[selector = sol("approve(address,uint256)")]
+    Approve { spender: Address, amount: u256 } -> bool,
+    #[selector = sol("transferFrom(address,address,uint256)")]
+    TransferFrom { from: Address, to: Address, amount: u256 } -> bool,
+    #[selector = sol("balanceOf(address)")]
+    BalanceOf { owner: Address } -> u256,
+}
+
+/// Minimal 6-decimal USDC stand-in (reverts on missing allowance/balance).
+pub contract MockUsdc uses (ctx: Ctx) {
+    mut balances: StorageMap<Address, u256>,
+    mut allowances: StorageMap<(Address, Address), u256>,
+
+    recv TokenMsg {
+        Mint { to, amount } uses (mut balances) {
+            balances.set(key: to, value: balances.get(key: to) + amount)
+        }
+
+        Approve { spender, amount } -> bool uses (ctx, mut allowances) {
+            allowances.set(key: (ctx.caller(), spender), value: amount)
+            true
+        }
+
+        TransferFrom { from, to, amount } -> bool
+        uses (ctx, mut balances, mut allowances)
+        {
+            let key = (from, ctx.caller())
+            let allowed = allowances.get(key)
+            assert!(allowed >= amount, "allowance")
+            assert!(balances.get(key: from) >= amount, "balance")
+            if allowed != 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff {
+                allowances.set(key, value: allowed - amount)
+            }
+            balances.set(key: from, value: balances.get(key: from) - amount)
+            balances.set(key: to, value: balances.get(key: to) + amount)
+            true
+        }
+
+        BalanceOf { owner } -> u256 uses (balances) {
+            balances.get(key: owner)
+        }
+    }
+}
+
+/// Token that returns `false` instead of reverting.
+pub contract FalseToken {
+    recv TokenMsg {
+        Mint { to, amount } {}
+        Approve { spender, amount } -> bool {
+            false
+        }
+        TransferFrom { from, to, amount } -> bool {
+            false
+        }
+        BalanceOf { owner } -> u256 {
+            0
+        }
+    }
+}
+
+msg ArmMsg {
+    #[selector = sol("arm(address)")]
+    Arm { target: Address },
+    #[selector = sol("innerRevert()")]
+    InnerRevert -> u256,
+}
+
+/// Token whose `transferFrom` tries to call back into the settlement
+/// contract, records the selector the re-entrant call reverted with, and then
+/// completes the transfer normally.
+pub contract ReentrantToken uses (call: mut Call) {
+    mut target: Address,
+    mut inner_revert: u256,
+
+    recv ArmMsg {
+        Arm { target: t } uses (mut target) {
+            target = t
+        }
+        InnerRevert -> u256 uses (inner_revert) {
+            inner_revert
+        }
+    }
+
+    recv TokenMsg {
+        Mint { to, amount } {}
+        Approve { spender, amount } -> bool {
+            true
+        }
+        TransferFrom { from, to, amount } -> bool
+        uses (target, mut inner_revert, mut call)
+        {
+            var ret = MemBuffer::with_capacity(32)
+            let outcome = call
+                .try_call_into(
+                    addr: target,
+                    gas: 200000,
+                    value: Wei::zero(),
+                    message: SettlementMsg::Settle {
+                        group_id: group(),
+                        to: bob(),
+                        amount: 1,
+                        memo: memo(),
+                    },
+                    ret: mut ret,
+                )
+            if !outcome.success() && outcome.returndata_len() >= 4 {
+                inner_revert = ret.span().word_at(0) >> 224
+            }
+            true
+        }
+        BalanceOf { owner } -> u256 {
+            0
+        }
+    }
+}
+
+msg ActorMsg {
+    #[selector = sol("accept(address)")]
+    Accept { target: Address },
+}
+
+/// A second account that can send transactions: accepts ownership.
+pub contract Actor uses (call: mut Call) {
+    recv ActorMsg {
+        Accept { target } uses (mut call) {
+            call.call(
+                addr: target,
+                gas: 200000,
+                value: Wei::zero(),
+                message: AdminMsg::AcceptOwnership {},
+            )
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const MAX_U256: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+const GAS: u256 = 1_000_000
+
+fn treasury() -> Address {
+    Address::new(0x7ea5)
+}
+fn bob() -> Address {
+    Address::new(0xb0b)
+}
+fn carol() -> Address {
+    Address::new(0xca401)
+}
+fn group() -> Bytes32 {
+    Bytes32 { val: 0x60a7419 }
+}
+fn memo() -> Bytes32 {
+    Bytes32 { val: 0x5e771e }
+}
+
+/// Deploy MockUsdc + settlement (0.30% fee, owner = `owner`), give the test
+/// contract (alice) 1,000 USDC and approve the settlement for all of it.
+fn setup(owner: Address) -> (Address, Address) uses (evm: mut Evm) {
+    let usdc = evm.create2<MockUsdc>(value: Wei::zero(), args: (), salt: 0)
+    let s = evm
+        .create2<SplitChaiSettlement>(
+            value: Wei::zero(),
+            args: (usdc, treasury(), 30, owner),
+            salt: 0,
+        )
+    mint(usdc, to: evm.address(), amount: Usdc::whole(1_000).raw())
+    let _: bool = evm
+        .call(
+            addr: usdc,
+            gas: GAS,
+            value: Wei::zero(),
+            message: TokenMsg::Approve { spender: s, amount: MAX_U256 },
+        )
+    (usdc, s)
+}
+
+fn mint(_ token: Address, to: Address, amount: u256) uses (evm: mut Evm) {
+    evm.call(
+        addr: token,
+        gas: GAS,
+        value: Wei::zero(),
+        message: TokenMsg::Mint { to, amount },
+    )
+}
+
+fn balance(_ token: Address, _ owner: Address) -> u256 uses (evm: mut Evm) {
+    evm.call(
+        addr: token,
+        gas: GAS,
+        value: Wei::zero(),
+        message: TokenMsg::BalanceOf { owner },
+    )
+}
+
+fn settle(_ s: Address, to: Address, amount: u256) -> u256 uses (evm: mut Evm) {
+    evm.call(
+        addr: s,
+        gas: GAS,
+        value: Wei::zero(),
+        message: SettlementMsg::Settle { group_id: group(), to, amount, memo: memo() },
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Money types (pure)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bps_of_rounds_down_like_solidity() {
+    let fee = Bps::new(30)
+    assert!(fee.of(Usdc::whole(100)) == Usdc::units(300_000))
+    assert!(fee.of(Usdc::units(100)) == Usdc::zero())
+    assert!(fee.of(Usdc::units(334)) == Usdc::units(1))
+    assert!(Bps::new(0).of(Usdc::whole(1_000_000)) == Usdc::zero())
+}
+
+#[test]
+fn fee_never_exceeds_one_percent() {
+    var amount: u256 = 1
+    while amount < 10_000_000_000_000 {
+        let a = Usdc::units(amount)
+        assert!(MAX_FEE.of(a) <= Usdc::units(amount / 100))
+        assert!(MAX_FEE.of(a) + (a - MAX_FEE.of(a)) == a)
+        amount = amount * 7 + 3
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Contract
+// ---------------------------------------------------------------------------
+
+#[test]
+fn constructor_state() uses (evm: mut Evm) {
+    let (usdc, s) = setup(owner: evm.address())
+    let token: Address = evm
+        .call(
+            addr: s,
+            gas: GAS,
+            value: Wei::zero(),
+            message: ViewMsg::UsdcToken {},
+        )
+    let t: Address = evm.call(
+            addr: s,
+            gas: GAS,
+            value: Wei::zero(),
+            message: ViewMsg::Treasury {},
+        )
+    let fee: u16 = evm.call(
+            addr: s,
+            gas: GAS,
+            value: Wei::zero(),
+            message: ViewMsg::FeeBps {},
+        )
+    let owner: Address = evm.call(
+            addr: s,
+            gas: GAS,
+            value: Wei::zero(),
+            message: ViewMsg::Owner {},
+        )
+    let max: u16 = evm.call(
+            addr: s,
+            gas: GAS,
+            value: Wei::zero(),
+            message: ViewMsg::MaxFeeBps {},
+        )
+    let paused: bool = evm.call(
+            addr: s,
+            gas: GAS,
+            value: Wei::zero(),
+            message: ViewMsg::Paused {},
+        )
+    assert!(token == usdc)
+    assert!(t == treasury())
+    assert!(fee == 30)
+    assert!(owner == evm.address())
+    assert!(max == 100)
+    assert!(!paused)
+}
+
+#[test(should_revert, selector = 0xcd4e6167)]
+fn constructor_rejects_fee_above_cap() uses (evm: mut Evm) {
+    let usdc = evm.create2<MockUsdc>(value: Wei::zero(), args: (), salt: 0)
+    let _ = evm
+        .create2<SplitChaiSettlement>(
+            value: Wei::zero(),
+            args: (usdc, treasury(), 101, evm.address()),
+            salt: 0,
+        )
+}
+
+#[test(should_revert, selector = 0xd92e233d)]
+fn constructor_rejects_zero_token() uses (evm: mut Evm) {
+    let _ = evm
+        .create2<SplitChaiSettlement>(
+            value: Wei::zero(),
+            args: (Address::zero(), treasury(), 30, evm.address()),
+            salt: 0,
+        )
+}
+
+#[test]
+fn settle_with_fee() uses (evm: mut Evm) {
+    let (usdc, s) = setup(owner: evm.address())
+    let fee = settle(s, to: bob(), amount: Usdc::whole(100).raw())
+    assert!(fee == 300_000)
+    assert!(balance(usdc, bob()) == 99_700_000)
+    assert!(balance(usdc, treasury()) == 300_000)
+    assert!(balance(usdc, evm.address()) == Usdc::whole(900).raw())
+    assert!(balance(usdc, s) == 0) // never custodial
+}
+
+#[test]
+fn settle_zero_fee() uses (evm: mut Evm) {
+    let (usdc, s) = setup(owner: evm.address())
+    evm.call(
+        addr: s,
+        gas: GAS,
+        value: Wei::zero(),
+        message: AdminMsg::SetFeeBps { fee_bps: 0 },
+    )
+    let fee = settle(s, to: bob(), amount: Usdc::whole(25).raw())
+    assert!(fee == 0)
+    assert!(balance(usdc, bob()) == Usdc::whole(25).raw())
+    assert!(balance(usdc, treasury()) == 0)
+}
+
+#[test]
+fn tiny_amount_rounds_fee_down() uses (evm: mut Evm) {
+    let (usdc, s) = setup(owner: evm.address())
+    let fee = settle(s, to: bob(), amount: 100)
+    assert!(fee == 0)
+    assert!(balance(usdc, bob()) == 100)
+}
+
+#[test]
+fn settle_batch() uses (evm: mut Evm) {
+    let (usdc, s) = setup(owner: evm.address())
+    let payments = dyn_array_from(
+        [
+            Payment { to: bob(), amount: Usdc::whole(40).raw() },
+            Payment { to: carol(), amount: Usdc::whole(60).raw() },
+        ],
+    )
+    let total: u256 = evm
+        .call(
+            addr: s,
+            gas: GAS,
+            value: Wei::zero(),
+            message: SettlementMsg::SettleBatch { group_id: group(), payments, memo: memo() },
+        )
+    assert!(total == 120_000 + 180_000)
+    assert!(balance(usdc, bob()) == 40_000_000 - 120_000)
+    assert!(balance(usdc, carol()) == 60_000_000 - 180_000)
+    assert!(balance(usdc, treasury()) == 300_000)
+}
+
+#[test(should_revert, selector = 0xc2e5347d)]
+fn empty_batch_reverts() uses (evm: mut Evm) {
+    let (_, s) = setup(owner: evm.address())
+    let none = MemVec<Payment>::new()
+    let _: u256 = evm
+        .call(
+            addr: s,
+            gas: GAS,
+            value: Wei::zero(),
+            message: SettlementMsg::SettleBatch {
+                group_id: group(),
+                payments: DynArray::from_slice(none.as_slice()),
+                memo: memo(),
+            },
+        )
+}
+
+#[test(should_revert, selector = 0x1f2a2005)]
+fn zero_amount_reverts() uses (evm: mut Evm) {
+    let (_, s) = setup(owner: evm.address())
+    let _ = settle(s, to: bob(), amount: 0)
+}
+
+#[test(should_revert, selector = 0x82987a24)]
+fn self_payment_reverts() uses (evm: mut Evm) {
+    let (_, s) = setup(owner: evm.address())
+    let _ = settle(s, to: evm.address(), amount: 1_000_000)
+}
+
+#[test(should_revert, selector = 0xd92e233d)]
+fn zero_recipient_reverts() uses (evm: mut Evm) {
+    let (_, s) = setup(owner: evm.address())
+    let _ = settle(s, to: Address::zero(), amount: 1_000_000)
+}
+
+#[test(should_revert, selector = 0x90b8ec18)]
+fn missing_allowance_is_transfer_failed() uses (evm: mut Evm) {
+    let usdc = evm.create2<MockUsdc>(value: Wei::zero(), args: (), salt: 0)
+    let s = evm
+        .create2<SplitChaiSettlement>(
+            value: Wei::zero(),
+            args: (usdc, treasury(), 30, evm.address()),
+            salt: 0,
+        )
+    mint(
+        usdc,
+        to: evm.address(),
+        amount: 10_000_000,
+    ) // funds, but no approval
+    let _ = settle(s, to: bob(), amount: 1_000_000)
+}
+
+#[test(should_revert, selector = 0x90b8ec18)]
+fn false_returning_token_is_transfer_failed() uses (evm: mut Evm) {
+    let t = evm.create2<FalseToken>(value: Wei::zero(), args: (), salt: 0)
+    let s = evm
+        .create2<SplitChaiSettlement>(
+            value: Wei::zero(),
+            args: (t, treasury(), 0, evm.address()),
+            salt: 0,
+        )
+    let _ = settle(s, to: bob(), amount: 1_000_000)
+}
+
+/// Stricter than the Solidity original: a "token" address with no code is a
+/// failed transfer, not a silent no-op.
+#[test(should_revert, selector = 0x90b8ec18)]
+fn codeless_token_is_transfer_failed() uses (evm: mut Evm) {
+    let s = evm
+        .create2<SplitChaiSettlement>(
+            value: Wei::zero(),
+            args: (Address::new(0xe0a), treasury(), 30, evm.address()),
+            salt: 0,
+        )
+    let _ = settle(s, to: bob(), amount: 1_000_000)
+}
+
+/// A token that re-enters `settle` from inside `transferFrom` hits the
+/// transient lock: the inner call reverts with `Reentrancy()` while the
+/// outer settlement completes.
+#[test]
+fn reentrancy_is_blocked() uses (evm: mut Evm) {
+    let t = evm.create2<ReentrantToken>(value: Wei::zero(), args: (), salt: 0)
+    let s = evm
+        .create2<SplitChaiSettlement>(
+            value: Wei::zero(),
+            args: (t, treasury(), 0, evm.address()),
+            salt: 0,
+        )
+    evm.call(
+        addr: t,
+        gas: GAS,
+        value: Wei::zero(),
+        message: ArmMsg::Arm { target: s },
+    )
+    let _ = settle(s, to: bob(), amount: 1_000_000)
+    let inner: u256 = evm
+        .call(
+            addr: t,
+            gas: GAS,
+            value: Wei::zero(),
+            message: ArmMsg::InnerRevert {},
+        )
+    assert!(inner == 0xab143c06) // Reentrancy()
+}
+
+/// The lock lives in transient storage and is released after each call, so
+/// two settlements in a row (same transaction) both go through.
+#[test]
+fn lock_is_released_between_calls() uses (evm: mut Evm) {
+    let (usdc, s) = setup(owner: evm.address())
+    let _ = settle(s, to: bob(), amount: 1_000_000)
+    let _ = settle(s, to: carol(), amount: 1_000_000)
+    assert!(balance(usdc, bob()) == 997_000)
+    assert!(balance(usdc, carol()) == 997_000)
+}
+
+#[test(should_revert, selector = 0x1309a563)]
+fn paused_blocks_settle() uses (evm: mut Evm) {
+    let (_, s) = setup(owner: evm.address())
+    evm.call(
+        addr: s,
+        gas: GAS,
+        value: Wei::zero(),
+        message: AdminMsg::SetPaused { paused: true },
+    )
+    let _ = settle(s, to: bob(), amount: 1_000_000)
+}
+
+#[test]
+fn unpause_restores_settle() uses (evm: mut Evm) {
+    let (usdc, s) = setup(owner: evm.address())
+    evm.call(
+        addr: s,
+        gas: GAS,
+        value: Wei::zero(),
+        message: AdminMsg::SetPaused { paused: true },
+    )
+    evm.call(
+        addr: s,
+        gas: GAS,
+        value: Wei::zero(),
+        message: AdminMsg::SetPaused { paused: false },
+    )
+    let _ = settle(s, to: bob(), amount: 1_000_000)
+    assert!(balance(usdc, bob()) == 997_000)
+}
+
+#[test(should_revert, selector = 0x30cd7471)]
+fn only_owner_sets_fee() uses (evm: mut Evm) {
+    let (_, s) = setup(owner: carol())
+    evm.call(
+        addr: s,
+        gas: GAS,
+        value: Wei::zero(),
+        message: AdminMsg::SetFeeBps { fee_bps: 10 },
+    )
+}
+
+#[test(should_revert, selector = 0x30cd7471)]
+fn only_owner_sets_treasury() uses (evm: mut Evm) {
+    let (_, s) = setup(owner: carol())
+    evm.call(
+        addr: s,
+        gas: GAS,
+        value: Wei::zero(),
+        message: AdminMsg::SetTreasury { treasury: evm.address() },
+    )
+}
+
+#[test(should_revert, selector = 0x30cd7471)]
+fn only_owner_pauses() uses (evm: mut Evm) {
+    let (_, s) = setup(owner: carol())
+    evm.call(
+        addr: s,
+        gas: GAS,
+        value: Wei::zero(),
+        message: AdminMsg::SetPaused { paused: true },
+    )
+}
+
+#[test(should_revert, selector = 0xcd4e6167)]
+fn fee_cap_enforced() uses (evm: mut Evm) {
+    let (_, s) = setup(owner: evm.address())
+    evm.call(
+        addr: s,
+        gas: GAS,
+        value: Wei::zero(),
+        message: AdminMsg::SetFeeBps { fee_bps: 101 },
+    )
+}
+
+#[test(should_revert, selector = 0xd92e233d)]
+fn zero_treasury_rejected() uses (evm: mut Evm) {
+    let (_, s) = setup(owner: evm.address())
+    evm.call(
+        addr: s,
+        gas: GAS,
+        value: Wei::zero(),
+        message: AdminMsg::SetTreasury { treasury: Address::zero() },
+    )
+}
+
+#[test]
+fn set_treasury_redirects_fees() uses (evm: mut Evm) {
+    let (usdc, s) = setup(owner: evm.address())
+    evm.call(
+        addr: s,
+        gas: GAS,
+        value: Wei::zero(),
+        message: AdminMsg::SetTreasury { treasury: carol() },
+    )
+    let _ = settle(s, to: bob(), amount: Usdc::whole(100).raw())
+    assert!(balance(usdc, carol()) == 300_000)
+    assert!(balance(usdc, treasury()) == 0)
+}
+
+#[test]
+fn two_step_ownership() uses (evm: mut Evm) {
+    let (_, s) = setup(owner: evm.address())
+    let actor = evm.create2<Actor>(value: Wei::zero(), args: (), salt: 0)
+    evm.call(
+        addr: s,
+        gas: GAS,
+        value: Wei::zero(),
+        message: AdminMsg::TransferOwnership { new_owner: actor },
+    )
+    let still: Address = evm.call(
+            addr: s,
+            gas: GAS,
+            value: Wei::zero(),
+            message: ViewMsg::Owner {},
+        )
+    assert!(still == evm.address())
+    evm.call(
+        addr: actor,
+        gas: GAS,
+        value: Wei::zero(),
+        message: ActorMsg::Accept { target: s },
+    )
+    let owner: Address = evm.call(
+            addr: s,
+            gas: GAS,
+            value: Wei::zero(),
+            message: ViewMsg::Owner {},
+        )
+    let pending: Address = evm
+        .call(
+            addr: s,
+            gas: GAS,
+            value: Wei::zero(),
+            message: ViewMsg::PendingOwner {},
+        )
+    assert!(owner == actor)
+    assert!(pending == Address::zero())
+}
+
+#[test(should_revert, selector = 0x1853971c)]
+fn only_pending_owner_accepts() uses (evm: mut Evm) {
+    let (_, s) = setup(owner: evm.address())
+    evm.call(
+        addr: s,
+        gas: GAS,
+        value: Wei::zero(),
+        message: AdminMsg::TransferOwnership { new_owner: carol() },
+    )
+    evm.call(
+        addr: s,
+        gas: GAS,
+        value: Wei::zero(),
+        message: AdminMsg::AcceptOwnership {},
+    )
+}
+
+#[test]
+fn quote_fee_matches_settle() uses (evm: mut Evm) {
+    let (_, s) = setup(owner: evm.address())
+    let quoted: u256 = evm
+        .call(
+            addr: s,
+            gas: GAS,
+            value: Wei::zero(),
+            message: SettlementMsg::QuoteFee { amount: 12_345_678 },
+        )
+    let charged = settle(s, to: bob(), amount: 12_345_678)
+    assert!(quoted == charged)
+    assert!(quoted == 37_037)
+}
