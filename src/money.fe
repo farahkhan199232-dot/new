@@ -1,0 +1,206 @@
+// Typed money for SplitChai.
+//
+// `Usdc` is an amount in USDC base units (6 decimals) and `Bps` a fee rate in
+// basis points. Both are plain ABI words (`uint256` and `uint16`), so the
+// contract keeps the Solidity ABI, but inside Fe they cannot be mixed up:
+// `Usdc + Bps` or `Usdc * Usdc` do not compile, and the only way to turn a
+// rate into money is `Bps::of`, which rounds down like the Solidity version.
+
+use core::abi::{Abi, AbiDecoder, AbiFrame, AbiSize, AbiSpan, ByteInput, Decode, Encode}
+use core::ops::{Add, AddAssign, Eq, Ord, Sub}
+use std::abi::sol::types::SolCompat
+
+/// Basis points in one whole (100%).
+pub const BPS_DENOMINATOR: u256 = 10_000
+
+/// Hard cap on the fee: 1% (100 basis points). The owner can never exceed it.
+pub const MAX_FEE: Bps = Bps { value: 100 }
+
+/// An amount of USDC in base units (1 USDC = 1_000_000).
+pub struct Usdc { amount: u256 }
+
+impl Usdc {
+    pub const fn zero() -> Self {
+        Usdc { amount: 0 }
+    }
+
+    /// `n` base units (0.000001 USDC each).
+    pub const fn units(_ n: u256) -> Self {
+        Usdc { amount: n }
+    }
+
+    /// `n` whole USDC.
+    pub const fn whole(_ n: u256) -> Self {
+        Usdc { amount: n * 1_000_000 }
+    }
+
+    /// The amount as a plain integer, for calls into token contracts.
+    pub const fn raw(self) -> u256 {
+        self.amount
+    }
+}
+
+impl Copy for Usdc {}
+impl Snapshot for Usdc {}
+
+impl Eq for Usdc {
+    const fn eq(self, _ other: Usdc) -> bool {
+        self.amount == other.amount
+    }
+}
+
+impl Ord for Usdc {
+    const fn lt(self, _ other: Usdc) -> bool {
+        self.amount < other.amount
+    }
+    const fn le(self, _ other: Usdc) -> bool {
+        self.amount <= other.amount
+    }
+    const fn gt(self, _ other: Usdc) -> bool {
+        self.amount > other.amount
+    }
+    const fn ge(self, _ other: Usdc) -> bool {
+        self.amount >= other.amount
+    }
+}
+
+impl Add for Usdc {
+    // Checked: overflow reverts with Panic(0x11), as in Solidity 0.8.
+    const fn add(own self, _ other: own Usdc) -> Usdc {
+        Usdc { amount: self.amount + other.amount }
+    }
+}
+
+impl Sub for Usdc {
+    const fn sub(own self, _ other: own Usdc) -> Usdc {
+        Usdc { amount: self.amount - other.amount }
+    }
+}
+
+impl AddAssign for Usdc {
+    const fn add_assign(mut self, _ other: own Usdc) {
+        self = self + other
+    }
+}
+
+/// A fee rate in basis points (1 bps = 0.01%).
+pub struct Bps { value: u16 }
+
+impl Bps {
+    pub const fn new(_ value: u16) -> Self {
+        Bps { value }
+    }
+
+    pub const fn raw(self) -> u16 {
+        self.value
+    }
+
+    /// The fee this rate takes from `amount`, rounded down:
+    /// `amount * bps / 10_000`, exactly as the Solidity `quoteFee`.
+    pub fn of(self, _ amount: Usdc) -> Usdc {
+        Usdc { amount: amount.amount * (self.value as u256) / BPS_DENOMINATOR }
+    }
+}
+
+impl Copy for Bps {}
+impl Snapshot for Bps {}
+
+impl Eq for Bps {
+    const fn eq(self, _ other: Bps) -> bool {
+        self.value == other.value
+    }
+}
+
+impl Ord for Bps {
+    const fn lt(self, _ other: Bps) -> bool {
+        self.value < other.value
+    }
+    const fn le(self, _ other: Bps) -> bool {
+        self.value <= other.value
+    }
+    const fn gt(self, _ other: Bps) -> bool {
+        self.value > other.value
+    }
+    const fn ge(self, _ other: Bps) -> bool {
+        self.value >= other.value
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ABI: `Usdc` is a Solidity `uint256`, `Bps` a Solidity `uint16`
+// ---------------------------------------------------------------------------
+//
+// Spelling these out (instead of `#[abi]`, which would encode a one-field
+// tuple) lets `#[selector = sol("settle(bytes32,address,uint256,bytes32)")]`
+// type-check against `amount: Usdc`: the compiler verifies every selector
+// string against the field types.
+
+impl AbiSize for Usdc {
+    const HEAD_SIZE: u256 = 32
+    const IS_DYNAMIC: bool = false
+}
+
+impl<A: Abi> Encode<A> for Usdc {
+    #[inline(always)]
+    fn encode(own self, _ out: AbiFrame) {
+        out.store_word(at: 0, value: self.amount)
+    }
+}
+
+impl<A: Abi> Decode<A> for Usdc {
+    #[inline(always)]
+    fn decode_payload<D: AbiDecoder<A>, I: ByteInput>(_ d: mut D, _ input: I) -> Self {
+        Usdc { amount: d.read_word(input) }
+    }
+
+    #[inline(always)]
+    fn decode_from<I: ByteInput>(_ input: I, _ pos: u256) -> Self {
+        Usdc { amount: input.word_at(pos) }
+    }
+}
+
+impl<A: Abi> AbiSpan<A> for Usdc {
+    fn payload_end<I: ByteInput>(_: I, base: u256, pos: u256) -> u256 {
+        pos + 32
+    }
+}
+
+impl SolCompat for Usdc {
+    type S = String<7>
+    const SOL_TYPE: Self::S = "uint256"
+}
+
+impl AbiSize for Bps {
+    const HEAD_SIZE: u256 = 32
+    const IS_DYNAMIC: bool = false
+}
+
+impl<A: Abi> Encode<A> for Bps {
+    #[inline(always)]
+    fn encode(own self, _ out: AbiFrame) {
+        out.store_word(at: 0, value: self.value as u256)
+    }
+}
+
+impl<A: Abi> Decode<A> for Bps {
+    // Out-of-range words revert, exactly like Solidity's `uint16` decoder.
+    fn decode_payload<D: AbiDecoder<A>, I: ByteInput>(_ d: mut D, _ input: I) -> Self {
+        Bps { value: A::decode_u16_word(d.read_word(input)) }
+    }
+
+    #[inline(always)]
+    fn decode_from<I: ByteInput>(_ input: I, _ pos: u256) -> Self {
+        Bps { value: A::decode_u16_word(input.word_at(pos)) }
+    }
+}
+
+impl<A: Abi> AbiSpan<A> for Bps {
+    fn payload_end<I: ByteInput>(_: I, base: u256, pos: u256) -> u256 {
+        pos + 32
+    }
+}
+
+impl SolCompat for Bps {
+    type S = String<6>
+    const SOL_TYPE: Self::S = "uint16"
+}

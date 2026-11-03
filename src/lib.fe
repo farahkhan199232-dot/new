@@ -1,0 +1,373 @@
+// SplitChai settlement, rewritten in Fe.
+//
+// Moves USDC from a payer to a group member to settle a SplitChai balance,
+// taking an optional protocol fee (capped at 1%) for a treasury. The contract
+// is non-custodial: it pulls from the payer and pushes straight to the
+// recipient and the treasury in the same call, so it never holds a balance.
+//
+// It is ABI-compatible with the Solidity original (same selectors, events and
+// custom errors), so the existing SplitChai frontend and the original Foundry
+// test suite run against it unchanged.
+
+use std::abi::{Bytes32, DynArray}
+use std::evm::{TSlot, TokenCall, erc20, revert_error}
+
+pub use money::{Bps, MAX_FEE, Usdc}
+
+// ---------------------------------------------------------------------------
+// Interface
+// ---------------------------------------------------------------------------
+
+/// One debt to pay in a batch: the Solidity `Payment` struct.
+#[abi]
+pub struct Payment { pub to: Address, pub amount: u256 }
+impl Copy for Payment {}
+
+/// What any group member can do.
+pub msg SettlementMsg {
+    #[selector = sol("settle(bytes32,address,uint256,bytes32)")]
+    Settle { group_id: Bytes32, to: Address, amount: u256, memo: Bytes32 } -> u256,
+    #[selector = sol("settleBatch(bytes32,(address,uint256)[],bytes32)")]
+    SettleBatch { group_id: Bytes32, payments: DynArray<Payment>, memo: Bytes32 } -> u256,
+    #[selector = sol("quoteFee(uint256)")]
+    QuoteFee { amount: u256 } -> u256,
+}
+
+/// Read-only views, named like the Solidity public getters.
+pub msg ViewMsg {
+    #[selector = sol("usdc()")]
+    UsdcToken -> Address,
+    #[selector = sol("owner()")]
+    Owner -> Address,
+    #[selector = sol("pendingOwner()")]
+    PendingOwner -> Address,
+    #[selector = sol("treasury()")]
+    Treasury -> Address,
+    #[selector = sol("feeBps()")]
+    FeeBps -> u16,
+    #[selector = sol("paused()")]
+    Paused -> bool,
+    #[selector = sol("MAX_FEE_BPS()")]
+    MaxFeeBps -> u16,
+}
+
+/// What only the owner (or the pending owner) can do.
+pub msg AdminMsg {
+    #[selector = sol("setFeeBps(uint16)")]
+    SetFeeBps { fee_bps: u16 },
+    #[selector = sol("setTreasury(address)")]
+    SetTreasury { treasury: Address },
+    #[selector = sol("setPaused(bool)")]
+    SetPaused { paused: bool },
+    #[selector = sol("transferOwnership(address)")]
+    TransferOwnership { new_owner: Address },
+    #[selector = sol("acceptOwnership()")]
+    AcceptOwnership,
+}
+
+// ---------------------------------------------------------------------------
+// Events and errors (same signatures as the Solidity contract)
+// ---------------------------------------------------------------------------
+
+#[event]
+pub struct Settled {
+    #[indexed]
+    pub group_id: Bytes32,
+    #[indexed]
+    pub from: Address,
+    #[indexed]
+    pub to: Address,
+    pub amount: u256,
+    pub fee: u256,
+    pub memo: Bytes32,
+}
+
+#[event]
+pub struct FeeUpdated { pub fee_bps: u16 }
+
+#[event]
+pub struct TreasuryUpdated { pub treasury: Address }
+
+#[event]
+pub struct Paused { pub paused: bool }
+
+#[event]
+pub struct OwnershipTransferStarted {
+    #[indexed]
+    pub from: Address,
+    #[indexed]
+    pub to: Address,
+}
+
+#[event]
+pub struct OwnershipTransferred {
+    #[indexed]
+    pub from: Address,
+    #[indexed]
+    pub to: Address,
+}
+
+#[error]
+pub struct NotOwner {}
+#[error]
+pub struct NotPendingOwner {}
+#[error]
+pub struct ZeroAddress {}
+#[error]
+pub struct ZeroAmount {}
+#[error]
+pub struct SelfPayment {}
+#[error]
+pub struct FeeTooHigh {}
+#[error]
+pub struct IsPaused {}
+#[error]
+pub struct TransferFailed {}
+#[error]
+pub struct Reentrancy {}
+#[error]
+pub struct EmptyBatch {}
+
+// ---------------------------------------------------------------------------
+// Storage
+// ---------------------------------------------------------------------------
+
+/// Settlement configuration. Handlers that only settle read it and cannot
+/// write it: that is checked by the compiler through `uses`.
+pub struct Config { pub treasury: Address, pub fee: Bps, pub paused: bool }
+
+/// The parts of `Config` a settlement needs, copied out of storage once
+/// per call. Fe does not let a storage reference stay open across the
+/// external `transferFrom` call (a reentrant call could change it), so the
+/// handler snapshots what it needs first. In a batch this also means one
+/// storage read for all payments instead of one per payment.
+pub struct Terms { pub token: Address, pub treasury: Address, pub fee: Bps }
+impl Copy for Terms {}
+
+impl Config {
+    fn terms(self, token: Address) -> Terms {
+        Terms { token, treasury: self.treasury, fee: self.fee }
+    }
+}
+
+/// Two-step ownership.
+pub struct Ownership { pub owner: Address, pub pending: Address }
+
+impl Ownership {
+    fn require_owner(self, caller: Address) {
+        if caller != self.owner {
+            revert_error(NotOwner {})
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Contract
+// ---------------------------------------------------------------------------
+
+pub contract SplitChaiSettlement uses (ctx: Ctx, call: mut Call, log: mut Log) {
+    // The token never changes, so it is an immutable field: Fe keeps it in
+    // the contract's code (like a Solidity `immutable`), not in storage.
+    usdc: Address,
+    mut config: Config,
+    mut ownership: Ownership,
+    // Reentrancy lock in transient storage (EIP-1153): it clears itself at
+    // the end of the transaction and costs no persistent storage write.
+    mut lock: TSlot<bool>,
+
+    init(token: Address, treasury: Address, fee_bps: u16, owner: Address)
+    uses (mut usdc, mut config, mut ownership, mut log)
+    {
+        if token == Address::zero() || treasury == Address::zero() || owner == Address::zero() {
+            revert_error(ZeroAddress {})
+        }
+        let fee = Bps::new(fee_bps)
+        if fee > MAX_FEE {
+            revert_error(FeeTooHigh {})
+        }
+        usdc = token
+        config.treasury = treasury
+        config.fee = fee
+        config.paused = false
+        ownership.owner = owner
+        ownership.pending = Address::zero()
+        log.emit(OwnershipTransferred { from: Address::zero(), to: owner })
+        log.emit(FeeUpdated { fee_bps })
+        log.emit(TreasuryUpdated { treasury })
+    }
+
+    recv SettlementMsg {
+        Settle { group_id, to, amount, memo } -> u256
+        uses (ctx, mut call, mut log, usdc, config, mut lock)
+        {
+            enter(mut lock, config)
+            let terms = config.terms(token: usdc)
+            let fee = settle_one(
+                terms,
+                group_id,
+                from: ctx.caller(),
+                to,
+                amount: Usdc::units(amount),
+                memo,
+            )
+            lock.write(false)
+            fee.raw()
+        }
+
+        SettleBatch { group_id, payments, memo } -> u256
+        uses (ctx, mut call, mut log, usdc, config, mut lock)
+        {
+            enter(mut lock, config)
+            if payments.len() == 0 {
+                revert_error(EmptyBatch {})
+            }
+            let from = ctx.caller()
+            let terms = config.terms(token: usdc)
+            var total = Usdc::zero()
+            for p in payments {
+                total += settle_one(
+                    terms,
+                    group_id,
+                    from,
+                    to: p.to,
+                    amount: Usdc::units(p.amount),
+                    memo,
+                )
+            }
+            lock.write(false)
+            total.raw()
+        }
+
+        QuoteFee { amount } -> u256 uses (config) {
+            config.fee.of(Usdc::units(amount)).raw()
+        }
+    }
+
+    recv ViewMsg {
+        UsdcToken -> Address uses (usdc) {
+            usdc
+        }
+        Owner -> Address uses (ownership) {
+            ownership.owner
+        }
+        PendingOwner -> Address uses (ownership) {
+            ownership.pending
+        }
+        Treasury -> Address uses (config) {
+            config.treasury
+        }
+        FeeBps -> u16 uses (config) {
+            config.fee.raw()
+        }
+        Paused -> bool uses (config) {
+            config.paused
+        }
+        MaxFeeBps -> u16 {
+            MAX_FEE.raw()
+        }
+    }
+
+    recv AdminMsg {
+        SetFeeBps { fee_bps } uses (ctx, ownership, mut config, mut log) {
+            ownership.require_owner(caller: ctx.caller())
+            let fee = Bps::new(fee_bps)
+            if fee > MAX_FEE {
+                revert_error(FeeTooHigh {})
+            }
+            config.fee = fee
+            log.emit(FeeUpdated { fee_bps })
+        }
+
+        SetTreasury { treasury } uses (ctx, ownership, mut config, mut log) {
+            ownership.require_owner(caller: ctx.caller())
+            if treasury == Address::zero() {
+                revert_error(ZeroAddress {})
+            }
+            config.treasury = treasury
+            log.emit(TreasuryUpdated { treasury })
+        }
+
+        SetPaused { paused } uses (ctx, ownership, mut config, mut log) {
+            ownership.require_owner(caller: ctx.caller())
+            config.paused = paused
+            log.emit(Paused { paused })
+        }
+
+        TransferOwnership { new_owner } uses (ctx, mut ownership, mut log) {
+            ownership.require_owner(caller: ctx.caller())
+            ownership.pending = new_owner
+            log.emit(
+                OwnershipTransferStarted { from: ownership.owner, to: new_owner },
+            )
+        }
+
+        AcceptOwnership uses (ctx, mut ownership, mut log) {
+            let caller = ctx.caller()
+            if caller != ownership.pending {
+                revert_error(NotPendingOwner {})
+            }
+            log.emit(OwnershipTransferred { from: ownership.owner, to: caller })
+            ownership.owner = caller
+            ownership.pending = Address::zero()
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Settlement logic
+// ---------------------------------------------------------------------------
+
+/// Take the reentrancy lock and check the pause flag (Solidity's
+/// `nonReentrant whenNotPaused`).
+fn enter(lock: mut TSlot<bool>, config: Config) {
+    if lock.read() {
+        revert_error(Reentrancy {})
+    }
+    lock.write(true)
+    if config.paused {
+        revert_error(IsPaused {})
+    }
+}
+
+/// Validate one payment, move the funds and emit `Settled`. Returns the fee.
+fn settle_one(
+    terms: Terms,
+    group_id: Bytes32,
+    from: Address,
+    to: Address,
+    amount: Usdc,
+    memo: Bytes32,
+) -> Usdc
+uses (ctx: Ctx, call: mut Call, log: mut Log)
+{
+    if to == Address::zero() {
+        revert_error(ZeroAddress {})
+    }
+    if to == from {
+        revert_error(SelfPayment {})
+    }
+    if amount == Usdc::zero() {
+        revert_error(ZeroAmount {})
+    }
+
+    let fee = terms.fee.of(amount)
+    pull(token: terms.token, from, to, amount: amount - fee)
+    if fee > Usdc::zero() {
+        pull(token: terms.token, from, to: terms.treasury, amount: fee)
+    }
+    log.emit(
+        Settled { group_id, from, to, amount: amount.raw(), fee: fee.raw(), memo },
+    )
+    fee
+}
+
+/// `transferFrom` that turns every failure (revert, `false`, malformed
+/// return data, no code) into the contract's own `TransferFailed` error.
+fn pull(token: Address, from: Address, to: Address, amount: Usdc)
+uses (ctx: Ctx, call: mut Call)
+{
+    match erc20::try_transfer_from(token, owner: from, receiver: to, amount: amount.raw()) {
+        TokenCall::Ok => {},
+        _ => revert_error(TransferFailed {}),
+    }
+}
