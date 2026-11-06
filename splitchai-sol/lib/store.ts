@@ -5,7 +5,7 @@ import type { Group } from "./types";
 const URL_ = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
 const TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
 const PREFIX = "splitsol:";
-const redis = URL_ && TOKEN ? new Redis({ url: URL_, token: TOKEN }) : null;
+const redis = URL_?.startsWith("https://") && TOKEN ? new Redis({ url: URL_, token: TOKEN }) : null;
 
 const mem = globalThis as unknown as { __splitsol?: Map<string, unknown> };
 mem.__splitsol ??= new Map();
