@@ -37,7 +37,7 @@ export default function Home() {
           </ol>
           <p className="muted">
             Devnet only, no real money. Test token tUSDC <a href={explorerAddr(MINT)} target="_blank" rel="noreferrer">{MINT.slice(0, 6)}…</a> (6 decimals, free from the in-app faucet).
-            {DEMO_SIGNATURE && <> Example settle: <a href={explorerTx(DEMO_SIGNATURE)} target="_blank" rel="noreferrer">view on Solana Explorer</a>.</>}
+            {DEMO_SIGNATURE && <> Example settle: <a href={`/r/${DEMO_SIGNATURE}`}>on-chain receipt</a> · <a href={explorerTx(DEMO_SIGNATURE)} target="_blank" rel="noreferrer">Solana Explorer</a>.</>}
           </p>
         </section>
       </main>

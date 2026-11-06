@@ -19,7 +19,7 @@ export function demoGroup(): Group {
     expenses: [
       { id: "e1", description: "Beach villa, 2 nights", amount: 240_000_000, paidBy: "farah", shares: equalSplit(240_000_000, all), splitMode: "equal", createdAt: t0 + 1e6 },
       { id: "e2", description: "Scooter rentals", amount: 48_000_000, paidBy: "aisha", shares: equalSplit(48_000_000, all), splitMode: "equal", createdAt: t0 + 2e6 },
-      { id: "e3", description: "Seafood dinner", amount: 90_000_000, paidBy: "bilal", shares: { farah: 20_000_000, aisha: 25_000_000, bilal: 20_000_000, chirag: 25_000_000 }, splitMode: "custom", createdAt: t0 + 3e6 },
+      { id: "e3", description: "Seafood dinner", amount: 150_000_000, paidBy: "bilal", shares: { farah: 30_000_000, aisha: 40_000_000, bilal: 40_000_000, chirag: 40_000_000 }, splitMode: "custom", createdAt: t0 + 3e6 },
       { id: "e4", description: "Chai + vada pav run", amount: 6_000_000, paidBy: "chirag", shares: equalSplit(6_000_000, ["farah", "aisha", "chirag"]), splitMode: "equal", createdAt: t0 + 4e6 },
     ],
     settlements: [],

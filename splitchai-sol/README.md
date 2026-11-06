@@ -30,6 +30,7 @@ Next.js 16 (App Router) · `@solana/web3.js` 1.99 · `@solana/spl-token` · `@so
 | `lib/verify.ts`, `lib/chain.ts` | server-side receipt verification from devnet |
 | `app/api/*` | groups, members, expenses, settle (verify), faucet, health |
 | `components/GroupView.tsx` | group UI, wallet settle flow, `/g/demo` sample group |
+| `app/r/[sig]/page.tsx` | on-chain receipt page: reads the tx from devnet and explains every instruction |
 | `scripts/e2e.mts` | end-to-end devnet test against a running app |
 
 ## Run it

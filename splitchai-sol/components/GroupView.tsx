@@ -39,7 +39,7 @@ export default function GroupView({ id }: { id: string }) {
   }, [demo, id]);
 
   useEffect(() => {
-    setMe(localStorage.getItem(`splitsol:me:${id}`) || (demo ? "farah" : ""));
+    setMe(localStorage.getItem(`splitsol:me:${id}`) || (demo ? "aisha" : ""));
     load();
     if (demo) return;
     const t = setInterval(load, 8000);
@@ -219,9 +219,10 @@ export default function GroupView({ id }: { id: string }) {
             {receipt.networkFeeLamports != null && <> · network fee ◎{(receipt.networkFeeLamports / 1e9).toFixed(6)}</>}
           </p>
           {receipt.signature && (
-            <a href={explorerTx(receipt.signature)} target="_blank" rel="noreferrer">
-              {receipt.simulated ? "See a real verified settle tx on Solana Explorer ↗" : `Receipt ${short(receipt.signature)} on Solana Explorer ↗`}
-            </a>
+            <p className="row">
+              <a href={`/r/${receipt.signature}`} data-testid="receipt-link">{receipt.simulated ? "See a real verified settle receipt" : `On-chain receipt ${short(receipt.signature)}`} →</a>
+              <a href={explorerTx(receipt.signature)} target="_blank" rel="noreferrer">Solana Explorer ↗</a>
+            </p>
           )}
         </div>
       )}
@@ -360,7 +361,7 @@ export default function GroupView({ id }: { id: string }) {
                 {[...g.settlements].reverse().map((s) => (
                   <li key={s.id}>
                     <div><b>{byId[s.from]?.name} → {byId[s.to]?.name}</b> <span className="muted">{formatUsdc(s.amount)}{s.fee ? ` (+${formatUsdc(s.fee)} fee)` : ""}</span></div>
-                    <div className="right">{s.signature && s.signature !== "simulated" ? <a href={explorerTx(s.signature)} target="_blank" rel="noreferrer">{demo ? "example tx ↗" : `verified ${short(s.signature)} ↗`}</a> : <span className="muted">simulated</span>}</div>
+                    <div className="right">{s.signature && s.signature !== "simulated" ? <a href={`/r/${s.signature}`}>{demo ? "example receipt →" : `verified ${short(s.signature)} →`}</a> : <span className="muted">simulated</span>}</div>
                   </li>
                 ))}
               </ul>

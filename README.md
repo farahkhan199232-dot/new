@@ -28,6 +28,7 @@ Next.js 16 (App Router) · `@solana/web3.js` 1.99 · `@solana/spl-token` · `@so
 | `splitchai-sol/lib/split.ts`, `lib/balances.ts`, `lib/money.ts` | split math, net balances, settle plan, fee |
 | `splitchai-sol/lib/tx.ts` | settle transaction builder (multi-leg TransferChecked + fee + memo) |
 | `splitchai-sol/lib/verify.ts`, `lib/chain.ts` | server-side receipt verification from devnet |
+| `splitchai-sol/app/r/[sig]/page.tsx` | on-chain receipt page read from devnet |
 | `splitchai-sol/app/api/*` | groups, members, expenses, settle (verify), faucet, health |
 | `components/GroupView.tsx` | group UI, wallet settle flow, `/g/demo` sample group |
 | `scripts/e2e.mts` | end-to-end devnet test against a running app |
